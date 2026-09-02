@@ -29,11 +29,6 @@ def main() -> int:
     def report() -> None:
         print(f"visible={win.isVisible()} title={win.windowTitle()!r} "
               f"size={win.width()}x{win.height()}")
-        # 任务栏进度 COM 三态冒烟（真实桌面窗口句柄）
-        print("taskbar_available:", win._tb.available())
-        win._taskbar("normal", 0.42)
-        win._taskbar("indeterminate")
-        win._taskbar("clear")
         app.quit()
 
     QTimer.singleShot(2500, report)
