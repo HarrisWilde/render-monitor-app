@@ -27,7 +27,6 @@ from PySide6.QtWidgets import (
     QMenu,
     QMessageBox,
     QProgressBar,
-    QTreeWidget,
     QTreeWidgetItem,
     QVBoxLayout,
     QWidget,
@@ -38,6 +37,7 @@ from qfluentwidgets import (
     PrimaryPushButton,
     PushButton,
     SubtitleLabel,
+    TreeWidget,
 )
 
 from .. import blender_tools
@@ -157,8 +157,8 @@ class QueuePage(QWidget):
         self.workerLabel = BodyLabel("")
         root.addWidget(self.workerLabel)
 
-        # ---- 树（默认全展开；渲染期不禁用，避免“冻结”观感）
-        self.tree = QTreeWidget()
+        # ---- 树（Fluent TreeWidget：自动主题样式，API 与 QTreeWidget 兼容）
+        self.tree = TreeWidget()
         self.tree.setColumnCount(4)
         self.tree.setHeaderLabels(["名称", "状态", "进度", "输出 / 说明"])
         self.tree.header().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
