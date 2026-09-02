@@ -33,6 +33,8 @@ from qfluentwidgets import (
     ComboBox,
     CommandBar,
     FluentIcon,
+    Flyout,
+    FlyoutView,
     IndeterminateProgressBar,
     LineEdit,
     MessageBox,
@@ -40,9 +42,9 @@ from qfluentwidgets import (
     PushButton,
     RoundMenu,
     SubtitleLabel,
-    TeachingTip,
     TreeWidget,
 )
+from qfluentwidgets.common.style_sheet import isDarkTheme
 
 from .. import blender_tools
 from ..naming import DEFAULT_FILE_TEMPLATE
@@ -668,20 +670,56 @@ class QueuePage(QWidget):
 
     # ============================================================ 配置
     def _show_template_tips(self) -> None:
-        """命名模板占位符说明：Fluent TeachingTip（自带箭头/关闭/主题）。"""
-        content = "\n".join([
-            "{file}　当前 .blend 文件名（去扩展名）",
-            "{scene}　场景名",
-            "{name}　快照名",
-            "{index}　队列序号，从 1 起（可带格式，如 {index:02d}→07）",
-            "{frame}　渲染帧号（可带格式，如 {frame:04d}→0007）",
-            "",
-            "/ 会生成子文件夹；模板不含任何占位符时自动回退默认模板。",
-        ])
-        TeachingTip.create(
-            target=self.btnTemplateHelp, title="命名模板占位符",
-            content=content, icon=FluentIcon.INFO,
-            isClosable=True, duration=20000)
+        """命名模板占位符说明：Fluent Flyout（圆角卡片，风格同参考图）。"""
+        text = "#252525" if not isDarkTheme() else "#e6e6e6"
+        sub = "#808080"
+        accent = "#0078d4"
+        chip_border = "#d0d0d0" if not isDarkTheme() else "#5a5a5a"
+
+        view = FlyoutView(title="命名模板占位符", content="",
+                          icon=FluentIcon.DOCUMENT, isClosable=True)
+
+        rows = [
+            ("{file}", "当前 .blend 文件名（去扩展名）", "job_scene"),
+            ("{scene}", "场景名", "产品白底"),
+            ("{name}", "快照名", "正面"),
+            ("{index}", "队列序号，从 1 起（可带格式）", "{index:02d} → 07"),
+            ("{frame}", "渲染帧号（可带格式）", "{frame:04d} → 0007"),
+        ]
+        for token, desc, example in rows:
+            row = QWidget()
+            rl = QHBoxLayout(row)
+            rl.setContentsMargins(0, 0, 0, 0)
+            rl.setSpacing(10)
+            chip = QLabel(token)
+            chip.setStyleSheet(
+                f"border:1px solid {chip_border}; border-radius:6px;"
+                f" background: rgba(0,120,212,0.08); color:{accent};"
+                f" padding: 2px 8px; font-weight:600;")
+            col = QVBoxLayout()
+            col.setContentsMargins(0, 0, 0, 0)
+            col.setSpacing(0)
+            d = QLabel(desc)
+            d.setStyleSheet(f"color:{text};")
+            e = QLabel(f"例：{example}")
+            e.setStyleSheet(f"color:{sub}; font-size:11px;")
+            col.addWidget(d)
+            col.addWidget(e)
+            rl.addWidget(chip, 0, Qt.AlignmentFlag.AlignTop)
+            rl.addLayout(col, 1)
+            view.addWidget(row)
+
+        # 底部说明行
+        note = QLabel("/ 会生成子文件夹；模板不含任何占位符时自动回退默认模板。")
+        note.setWordWrap(True)
+        note.setStyleSheet(f"color:{sub}; font-size:11px;")
+        view.addWidget(note)
+
+        link = QLabel("了解有关命名模板的详细信息")
+        link.setStyleSheet(f"color:{accent};")
+        view.addWidget(link)
+
+        Flyout.make(view, target=self.btnTemplateHelp, parent=self.window())
 
     def _on_config_changed(self) -> None:
         self.configChanged.emit()
