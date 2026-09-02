@@ -5,7 +5,6 @@ from __future__ import annotations
 import sys
 
 from PySide6.QtWidgets import QApplication
-from qfluentwidgets import setTheme, Theme
 
 from rmqueue.ui.main_window import MainWindow
 
@@ -14,8 +13,8 @@ def main() -> int:
     app = QApplication(sys.argv)
     app.setApplicationName("Render Monitor Queue")
     app.setOrganizationName("RenderMonitorQueue")
-    # v1：固定浅色主题，保证自带控件（树表等）在两种系统主题下均清晰可读
-    setTheme(Theme.LIGHT)
+    # 主题/强调色在 MainWindow 内处理：默认跟随系统（深浅色），
+    # 并读取 Windows 系统强调色作为主题色
     window = MainWindow()
     window.show()
     return app.exec()

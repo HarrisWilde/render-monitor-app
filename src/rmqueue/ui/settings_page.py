@@ -7,14 +7,13 @@ from __future__ import annotations
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
-    QComboBox,
     QFormLayout,
     QHBoxLayout,
     QLabel,
     QVBoxLayout,
     QWidget,
 )
-from qfluentwidgets import BodyLabel, CardWidget, SubtitleLabel
+from qfluentwidgets import BodyLabel, CardWidget, ComboBox, SubtitleLabel
 
 from .. import __version__
 
@@ -41,10 +40,10 @@ class SettingsPage(QWidget):
         av.addWidget(BodyLabel("外观"))
         form = QFormLayout()
         row = QHBoxLayout()
-        self.cmbTheme = QComboBox()
-        self.cmbTheme.addItem("浅色（默认）", THEME_LIGHT)
-        self.cmbTheme.addItem("深色", THEME_DARK)
-        self.cmbTheme.addItem("跟随系统", THEME_AUTO)
+        self.cmbTheme = ComboBox()
+        self.cmbTheme.addItem("跟随系统（默认）", userData=THEME_AUTO)
+        self.cmbTheme.addItem("浅色", userData=THEME_LIGHT)
+        self.cmbTheme.addItem("深色", userData=THEME_DARK)
         row.addWidget(self.cmbTheme)
         row.addStretch(1)
         form.addRow("主题", row)
@@ -77,9 +76,10 @@ class SettingsPage(QWidget):
         self.themeChanged.emit(self.cmbTheme.currentData())
 
     def set_theme(self, theme: str) -> None:
-        idx = self.cmbTheme.findData(theme)
-        if idx >= 0:
-            self.cmbTheme.setCurrentIndex(idx)
+        for i in range(self.cmbTheme.count()):
+            if str(self.cmbTheme.itemData(i) or "") == theme:
+                self.cmbTheme.setCurrentIndex(i)
+                break
 
     def current_theme(self) -> str:
-        return str(self.cmbTheme.currentData() or THEME_LIGHT)
+        return str(self.cmbTheme.currentData() or THEME_AUTO)

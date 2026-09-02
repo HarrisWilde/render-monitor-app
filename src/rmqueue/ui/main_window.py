@@ -9,16 +9,19 @@
 from __future__ import annotations
 
 import os
+import sys
 
 from PySide6.QtCore import QSettings, Qt
-from PySide6.QtGui import QCloseEvent
-from PySide6.QtWidgets import QFileDialog, QMessageBox
+from PySide6.QtGui import QCloseEvent, QColor
+from PySide6.QtWidgets import QFileDialog
 from qfluentwidgets import (
     FluentIcon,
     FluentWindow,
     InfoBar,
     InfoBarPosition,
+    MessageBox,
     setTheme,
+    setThemeColor,
     Theme,
 )
 
@@ -65,10 +68,11 @@ class MainWindow(FluentWindow):
         self.setWindowTitle("Render Monitor Queue 渲染排队器")
         self.resize(1200, 820)
 
-        # 主题恢复
-        theme = self._prefs.value("theme", THEME_LIGHT)
+        # 主题：默认跟随系统（未保存过选择时），并同步 Windows 系统强调色
+        theme = self._prefs.value("theme", THEME_AUTO)
         self._apply_theme(str(theme))
         self.settings_page.set_theme(str(theme))
+        self._apply_system_accent()
 
         # 首页渲染选项：默认值 = QSettings → 自动探测兜底
         self.page.populate_blender(keep_current=False)
@@ -111,8 +115,28 @@ class MainWindow(FluentWindow):
         return self.page.config_get()
 
     def _apply_theme(self, theme: str) -> None:
-        setTheme(_THEME_QT.get(theme, Theme.LIGHT))
+        setTheme(_THEME_QT.get(theme, Theme.AUTO))
         self._prefs.setValue("theme", theme)
+
+    @staticmethod
+    def _system_accent_color():
+        """读取 Windows 系统强调色（AccentColor，ABGR）；失败返回 None。"""
+        if sys.platform != "win32":
+            return None
+        try:
+            import winreg
+
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER,
+                                r"Software\Microsoft\Windows\DWM") as key:
+                val, _ = winreg.QueryValueEx(key, "AccentColor")
+            return QColor(val & 0xFF, (val >> 8) & 0xFF, (val >> 16) & 0xFF)
+        except Exception:  # noqa: BLE001 - 读取失败就用默认主题色
+            return None
+
+    def _apply_system_accent(self) -> None:
+        color = self._system_accent_color()
+        if color is not None:
+            setThemeColor(color)
 
     def _persist_prefs(self) -> None:
         cfg = self._config()
@@ -307,12 +331,19 @@ class MainWindow(FluentWindow):
     # ------------------------------------------------------ 生命周期
     def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802
         if self._render is not None and self._busy:
-            answer = QMessageBox.question(
-                self, "退出",
-                "渲染正在进行，确定退出？（将停止当前渲染，未完成的快照保留待渲染）")
-            if answer != QMessageBox.StandardButton.Yes:
-                event.ignore()
-                return
-            self._render.cancel()
-            self._render.wait(5000)
+            def _quit() -> None:
+                self._render.cancel()
+                self._render.wait(5000)
+                event.accept()
+
+            box = MessageBox(
+                "退出",
+                "渲染正在进行，确定退出？（将停止当前渲染，未完成的快照保留待渲染）",
+                self)
+            box.yesButton.setText("退出")
+            box.cancelButton.setText("取消")
+            box.yesSignal.connect(_quit)
+            box.cancelSignal.connect(lambda: event.ignore())
+            box.exec()
+            return
         event.accept()

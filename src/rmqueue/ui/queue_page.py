@@ -17,15 +17,11 @@ import sys
 from PySide6.QtCore import QTimer, Qt, Signal
 from PySide6.QtGui import QBrush, QColor, QGuiApplication
 from PySide6.QtWidgets import (
-    QComboBox,
     QFileDialog,
     QFrame,
     QHBoxLayout,
     QHeaderView,
     QLabel,
-    QLineEdit,
-    QMenu,
-    QMessageBox,
     QTreeWidgetItem,
     QVBoxLayout,
     QWidget,
@@ -33,10 +29,14 @@ from PySide6.QtWidgets import (
 from qfluentwidgets import (
     BodyLabel,
     CardWidget,
+    ComboBox,
     IndeterminateProgressBar,
+    LineEdit,
+    MessageBox,
     PrimaryPushButton,
     ProgressBar,
     PushButton,
+    RoundMenu,
     SubtitleLabel,
     TreeWidget,
 )
@@ -219,7 +219,7 @@ class QueuePage(QWidget):
 
         row1 = QHBoxLayout()
         row1.addWidget(BodyLabel("Blender"))
-        self.cmbBlender = QComboBox()
+        self.cmbBlender = ComboBox()
         self.cmbBlender.setMinimumWidth(220)
         row1.addWidget(self.cmbBlender, 1)
         self.btnBrowseBlender = PushButton("浏览…")
@@ -239,11 +239,12 @@ class QueuePage(QWidget):
 
         row2 = QHBoxLayout()
         row2.addWidget(BodyLabel("输出目录"))
-        self.cmbSource = QComboBox()
-        self.cmbSource.addItem("全局输出目录（下方路径）", "global")
-        self.cmbSource.addItem("跟随 .blend 场景内插件设置（未设置时用全局）", "project")
+        self.cmbSource = ComboBox()
+        self.cmbSource.addItem("全局输出目录（下方路径）", userData="global")
+        self.cmbSource.addItem("跟随 .blend 场景内插件设置（未设置时用全局）",
+                               userData="project")
         row2.addWidget(self.cmbSource)
-        self.edOutdir = QLineEdit()
+        self.edOutdir = LineEdit()
         self.edOutdir.setPlaceholderText("全局输出目录（绝对路径）")
         row2.addWidget(self.edOutdir, 1)
         self.btnBrowseOut = PushButton("浏览…")
@@ -256,7 +257,7 @@ class QueuePage(QWidget):
 
         row3 = QHBoxLayout()
         row3.addWidget(BodyLabel("命名模板"))
-        self.edTemplate = QLineEdit()
+        self.edTemplate = LineEdit()
         self.edTemplate.setText(DEFAULT_FILE_TEMPLATE)
         row3.addWidget(self.edTemplate, 1)
         self.btnDefaultTemplate = PushButton("恢复默认")
@@ -330,19 +331,25 @@ class QueuePage(QWidget):
             self.cmbBlender.clear()
             for inst in self._installs:
                 label = f"Blender {inst.version_str or '（自定义）'}"
-                self.cmbBlender.addItem(label, inst.exe)
+                self.cmbBlender.addItem(label, userData=inst.exe)
             if current:
-                idx = self.cmbBlender.findData(current)
+                idx = self._blender_index_of(current)
                 if idx >= 0:
                     self.cmbBlender.setCurrentIndex(idx)
                 elif self._installs:
-                    self.cmbBlender.addItem("自定义 Blender", current)
+                    self.cmbBlender.addItem("自定义 Blender", userData=current)
                     self.cmbBlender.setCurrentIndex(self.cmbBlender.count() - 1)
             elif self._installs:
                 self.cmbBlender.setCurrentIndex(0)
         finally:
             self.cmbBlender.blockSignals(False)
         self._on_blender_changed()
+
+    def _blender_index_of(self, exe: str) -> int:
+        for i in range(self.cmbBlender.count()):
+            if str(self.cmbBlender.itemData(i) or "") == exe:
+                return i
+        return -1
 
     def blender_exe(self) -> str:
         return str(self.cmbBlender.currentData() or "")
@@ -359,7 +366,7 @@ class QueuePage(QWidget):
         else:
             path, _ = QFileDialog.getOpenFileName(self, "选择 blender", "/", "Blender")
         if path:
-            self.cmbBlender.addItem("自定义 Blender", path)
+            self.cmbBlender.addItem("自定义 Blender", userData=path)
             self.cmbBlender.setCurrentIndex(self.cmbBlender.count() - 1)
 
     def _browse_outdir(self) -> None:
@@ -507,13 +514,17 @@ class QueuePage(QWidget):
             self.statusLabel.setText("请先选中要移除的文件")
             return
         f = self._queue.files[idx]
-        if QMessageBox.question(self, "移除文件",
-                                f"从队列移除文件及其全部快照？\n{f.path}") \
-                != QMessageBox.StandardButton.Yes:
-            return
-        del self._queue.files[idx]
-        self.refresh()
-        self.statusLabel.setText(f"已移除 {os.path.basename(f.path)}")
+
+        def _do_remove() -> None:
+            del self._queue.files[idx]
+            self.refresh()
+            self.statusLabel.setText(f"已移除 {os.path.basename(f.path)}")
+
+        box = MessageBox("移除文件", f"从队列移除文件及其全部快照？\n{f.path}", self)
+        box.yesButton.setText("移除")
+        box.cancelButton.setText("取消")
+        box.yesSignal.connect(_do_remove)
+        box.exec()
 
     def _on_add_files(self) -> None:
         paths, _ = QFileDialog.getOpenFileNames(
@@ -525,7 +536,7 @@ class QueuePage(QWidget):
         item = self.tree.itemAt(pos)
         if item is None:
             return
-        menu = QMenu(self)
+        menu = RoundMenu(self)
         act_copy = menu.addAction("复制输出路径")
         act_open = menu.addAction("打开所在文件夹")
         chosen = menu.exec(self.tree.viewport().mapToGlobal(pos))
@@ -679,17 +690,18 @@ class QueuePage(QWidget):
         self.edOutdir.setText(cfg.get("output_dir", ""))
         if cfg.get("file_template"):
             self.edTemplate.setText(cfg["file_template"])
-        idx = self.cmbSource.findData(cfg.get("output_source", "global"))
-        if idx >= 0:
-            self.cmbSource.setCurrentIndex(idx)
+        for i in range(self.cmbSource.count()):
+            if str(self.cmbSource.itemData(i) or "") == cfg.get("output_source", "global"):
+                self.cmbSource.setCurrentIndex(i)
+                break
         self._on_config_changed()
 
     def populate_blender_keep_exe(self, exe: str) -> None:
         self.populate_blender(keep_current=True)
         if self.blender_exe() != exe:
-            idx = self.cmbBlender.findData(exe)
+            idx = self._blender_index_of(exe)
             if idx >= 0:
                 self.cmbBlender.setCurrentIndex(idx)
             else:
-                self.cmbBlender.addItem("自定义 Blender", exe)
+                self.cmbBlender.addItem("自定义 Blender", userData=exe)
                 self.cmbBlender.setCurrentIndex(self.cmbBlender.count() - 1)
