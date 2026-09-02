@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import os
+import sys
 
 from PySide6.QtCore import QSettings, Qt
 from PySide6.QtGui import QCloseEvent
@@ -31,6 +32,7 @@ from .settings_page import (
     THEME_LIGHT,
     SettingsPage,
 )
+from .taskbar_progress import TaskbarProgress
 from .workers import ProbeWorker, RenderWorker
 
 _APP_ORG = "RenderMonitorQueue"
@@ -50,6 +52,7 @@ class MainWindow(FluentWindow):
         self._probe: ProbeWorker | None = None
         self._render: RenderWorker | None = None
         self._prefs = QSettings(_APP_ORG, _APP_NAME)
+        self._tb = TaskbarProgress()  # Windows 任务栏进度（不可用时静默）
         # 整体进度：已完成文件累计 + 批次总数
         self._prev_done = 0
         self._prev_failed = 0
@@ -132,6 +135,21 @@ class MainWindow(FluentWindow):
         self._busy = busy
         self.page.set_busy(busy)
 
+    def _taskbar(self, mode: str, fraction: float | None = None) -> None:
+        """同步 Windows 任务栏进度：mode ∈ indeterminate|normal|clear。"""
+        if sys.platform != "win32" or not self._tb.available():
+            return
+        try:
+            hwnd = int(self.winId())
+        except Exception:  # noqa: BLE001
+            return
+        if mode == "indeterminate":
+            self._tb.indeterminate(hwnd)
+        elif mode == "normal" and fraction is not None:
+            self._tb.normal(hwnd, fraction)
+        elif mode == "clear":
+            self._tb.clear(hwnd)
+
     # ------------------------------------------------------ 添加/探针
     def _on_add_files(self, paths: list[str]) -> None:
         if self._busy:
@@ -152,6 +170,7 @@ class MainWindow(FluentWindow):
             return
         self.page.overall_mode("busy")  # 忙碌动画：明确“正在加载”，避免以为卡死
         self.page.set_worker_text(f"正在枚举 {len(paths)} 个文件…")
+        self._taskbar("indeterminate")
         self._probe = ProbeWorker(paths, exe, blender_probe.find_vendor_dir(), self)
         self._probe.fileProbed.connect(self._on_file_probed)
         self._probe.finished.connect(self._on_probe_finished)
@@ -169,6 +188,7 @@ class MainWindow(FluentWindow):
     def _on_probe_finished(self) -> None:
         self.page.refresh()
         self.page.overall_mode("hidden")
+        self._taskbar("clear")
         self._status("枚举完成")
 
     # ------------------------------------------------------ 渲染
@@ -209,7 +229,9 @@ class MainWindow(FluentWindow):
         self.page.refresh()  # 重建行/进度条注册表并保持全展开
         self.page.overall_mode("normal")
         self.page.set_status(f"渲染中：{os.path.basename(path)}（{total} 张）")
-        self.page.set_overall(self._prev_done + self._prev_failed, self._grand_total)
+        prev = self._prev_done + self._prev_failed
+        self.page.set_overall(prev, self._grand_total)
+        self._taskbar("normal", prev / max(self._grand_total, 1))
 
     def _on_items_tick(self, path: str, items, done: int, failed: int,
                        total: int) -> None:
@@ -227,6 +249,7 @@ class MainWindow(FluentWindow):
                 break
         value = (self._prev_done + self._prev_failed + terminal + partial)
         self.page.set_overall(value, self._grand_total)
+        self._taskbar("normal", value / max(self._grand_total, 1))
         # 左下角状态行：当前快照 + 采样/块细节 + 批次计数
         running = next((e for e in items if e.get("status") == "RENDERING"), None)
         details = f"当前：{current or '启动中'}"
@@ -248,6 +271,7 @@ class MainWindow(FluentWindow):
 
     def _on_run_finished(self, overview: dict) -> None:
         self.page.set_worker_text("")
+        self._taskbar("clear")
         self._set_busy(False)  # 会隐藏总进度条（无任务状态）
         self.page.refresh()
         cancelled = overview.get("cancelled")
@@ -315,4 +339,5 @@ class MainWindow(FluentWindow):
                 return
             self._render.cancel()
             self._render.wait(5000)
+        self._taskbar("clear")
         event.accept()
