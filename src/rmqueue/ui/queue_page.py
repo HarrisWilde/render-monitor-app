@@ -44,6 +44,7 @@ from qfluentwidgets import (
 from .. import blender_tools
 from ..naming import DEFAULT_FILE_TEMPLATE
 from ..queue import Queue
+from .widgets import PlaceholderHelpPopover, RichComboBox
 from .workers import status_text
 
 ROLE_TOKEN = Qt.ItemDataRole.UserRole
@@ -215,28 +216,20 @@ class QueuePage(QWidget):
         # ---- 渲染选项卡片（在首页）
         opts = CardWidget(self)
         ov = QVBoxLayout(opts)
-        ov.setSpacing(6)
+        ov.setSpacing(8)
 
+        # Blender：富下拉，选项内含「简短名 + 灰字全路径」（路径不再外置显示）
         row1 = QHBoxLayout()
         row1.addWidget(BodyLabel("Blender"))
-        self.cmbBlender = ComboBox()
-        self.cmbBlender.setMinimumWidth(220)
+        self.cmbBlender = RichComboBox()
         row1.addWidget(self.cmbBlender, 1)
         self.btnBrowseBlender = PushButton("浏览…")
         self.btnRescanBlender = PushButton("重新探测")
         row1.addWidget(self.btnBrowseBlender)
         row1.addWidget(self.btnRescanBlender)
         ov.addLayout(row1)
-        self.lblBlenderPath = QLabel("")
-        self.lblBlenderPath.setStyleSheet("color:#808080;font-size:11px;")
-        self.lblBlenderPath.setTextInteractionFlags(
-            Qt.TextInteractionFlag.TextSelectableByMouse)
-        ov.addWidget(self.lblBlenderPath)
-        self.lblBlenderHint = QLabel(_BLENDER_EXE_HINT)
-        self.lblBlenderHint.setWordWrap(True)
-        self.lblBlenderHint.setStyleSheet("color:#808080;font-size:11px;")
-        ov.addWidget(self.lblBlenderHint)
 
+        # 输出目录来源（下拉即含说明，不再另置灰色小字）
         row2 = QHBoxLayout()
         row2.addWidget(BodyLabel("输出目录"))
         self.cmbSource = ComboBox()
@@ -250,22 +243,22 @@ class QueuePage(QWidget):
         self.btnBrowseOut = PushButton("浏览…")
         row2.addWidget(self.btnBrowseOut)
         ov.addLayout(row2)
-        self.lblResolved = QLabel("")
-        self.lblResolved.setStyleSheet("color:#808080;font-size:11px;")
-        self.lblResolved.setWordWrap(True)
-        ov.addWidget(self.lblResolved)
 
+        # 命名模板 + “?”帮助浮窗
         row3 = QHBoxLayout()
         row3.addWidget(BodyLabel("命名模板"))
         self.edTemplate = LineEdit()
         self.edTemplate.setText(DEFAULT_FILE_TEMPLATE)
         row3.addWidget(self.edTemplate, 1)
+        self.btnTemplateHelp = PushButton("?")
+        self.btnTemplateHelp.setFixedSize(30, 30)
+        self.btnTemplateHelp.setToolTip("占位符说明")
+        self.btnTemplateHelp.clicked.connect(self._toggle_template_help)
+        row3.addWidget(self.btnTemplateHelp)
         self.btnDefaultTemplate = PushButton("恢复默认")
         row3.addWidget(self.btnDefaultTemplate)
         ov.addLayout(row3)
-        tplHint = QLabel("占位符 {file} {scene} {name} {index} {frame}；/ 生成子目录")
-        tplHint.setStyleSheet("color:#808080;font-size:11px;")
-        ov.addWidget(tplHint)
+        self._template_pop = None
         root.addWidget(opts)
 
         # ---- 状态行
@@ -355,7 +348,6 @@ class QueuePage(QWidget):
         return str(self.cmbBlender.currentData() or "")
 
     def _on_blender_changed(self) -> None:
-        self.lblBlenderPath.setText(self.blender_exe())
         self._on_config_changed()
 
     def _browse_blender(self) -> None:
@@ -446,7 +438,6 @@ class QueuePage(QWidget):
                                     + (f" · {done} 完成" if done else ""))
         finally:
             self._loading = False
-        self._update_resolved_hint()
 
     # ============================================================ 交互
     def _on_item_changed(self, item: QTreeWidgetItem, column: int) -> None:
@@ -662,18 +653,14 @@ class QueuePage(QWidget):
             cell.set_fraction(frac, status)
 
     # ============================================================ 配置
-    def _update_resolved_hint(self) -> None:
-        mode = self.cmbSource.currentData() or "global"
-        if mode == "global":
-            self.lblResolved.setText(
-                "全局输出目录：" + (self.edOutdir.text() or "（未设置）"))
-        else:
-            self.lblResolved.setText(
-                "跟随项目：各场景使用 .blend 内插件保存的输出目录"
-                "（//=blend 所在目录），未设置时回退全局。")
+    def _toggle_template_help(self) -> None:
+        if self._template_pop is not None:
+            self._template_pop.close()
+        pop = PlaceholderHelpPopover(self.window())
+        self._template_pop = pop
+        pop.show_below(self.btnTemplateHelp)
 
     def _on_config_changed(self) -> None:
-        self._update_resolved_hint()
         self.configChanged.emit()
 
     def config_get(self) -> dict:
