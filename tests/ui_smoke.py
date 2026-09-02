@@ -73,18 +73,27 @@ def main() -> int:
     assert q.shot_by(r"C:\demo\scene.blend", "Scene B", "u4").selected is False
     print("step: scene uncheck ok", flush=True)
 
-    # 全选/全不选（顶栏图标+文字按钮）
-    win.page._action_buttons["all"].click()
+    # 全选/全不选（CommandBar Action）
+    win.page._action_buttons["all"].trigger()
     app.processEvents()
     assert len(q.flatten_selected()) == 4
     print("step: btn_all ok", flush=True)
-    win.page._action_buttons["none"].click()
+    win.page._action_buttons["none"].trigger()
     app.processEvents()
     assert len(q.flatten_selected()) == 0
     print("step: btn_none ok", flush=True)
-    win.page._action_buttons["all"].click()
+    win.page._action_buttons["all"].trigger()
     app.processEvents()
     print("step: btn_all2 ok", flush=True)
+
+    # 渲染按钮状态切换：busy → 停止渲染，空闲 → 开始渲染
+    win.page.set_busy(True)
+    app.processEvents()
+    assert win.page._action_buttons["render"].text() == "停止渲染"
+    win.page.set_busy(False)
+    app.processEvents()
+    assert win.page._action_buttons["render"].text() == "开始渲染"
+    print("step: render action toggle ok", flush=True)
 
     # 开始渲染的校验路径（显式空配置 → 提示而不启动，防止误起真实渲染）
     win.page.config_set({

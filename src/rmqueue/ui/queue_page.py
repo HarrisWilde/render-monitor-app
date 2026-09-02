@@ -27,9 +27,11 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 from qfluentwidgets import (
+    Action,
     BodyLabel,
     CardWidget,
     ComboBox,
+    CommandBar,
     FluentIcon,
     IndeterminateProgressBar,
     LineEdit,
@@ -146,6 +148,7 @@ class QueuePage(QWidget):
         self._loading = False
         self._installs: list = []
         self._action_buttons: dict = {}
+        self._rendering = False
         # 行索引：key=(file,scene,uid) → (item, progressbar)
         self._rows: dict[tuple, tuple] = {}
         self._build_ui()
@@ -184,41 +187,31 @@ class QueuePage(QWidget):
         self.lblPercent.hide()
         root.addLayout(head)
 
-        # ---- 顶部操作条：图标+文字的 Fluent PushButton，分组间原生竖线分隔
-        bar = CardWidget(self)
-        bl = QHBoxLayout(bar)
-        bl.setSpacing(2)
-        bl.setContentsMargins(8, 4, 8, 4)
+        # ---- 顶部操作：CommandBar（图标 + 文字，文档支持 setToolButtonStyle）
+        self.cmdBar = CommandBar(self)
 
-        def _btn(icon, text: str, key: str, slot) -> None:
-            b = PushButton(text, bar)
-            b.setIcon(icon)
-            b.clicked.connect(slot)
-            self._action_buttons[key] = b
-            bl.addWidget(b)
+        def _cmd(icon, text: str, key: str, slot) -> None:
+            act = Action(icon, text, self)
+            act.triggered.connect(slot)
+            self._action_buttons[key] = act
+            self.cmdBar.addAction(act)
 
-        def _sep() -> None:
-            line = QFrame(bar)
-            line.setFrameShape(QFrame.Shape.VLine)
-            line.setFixedHeight(20)
-            line.setStyleSheet("color:#c0c0c0;")
-            bl.addWidget(line)
-
-        _btn(FluentIcon.FOLDER, "打开项目", "open", self.openProjectRequested)
-        _btn(FluentIcon.SAVE, "保存项目", "save", self._on_save)
-        _sep()
-        _btn(FluentIcon.FOLDER_ADD, "添加文件", "add", self._on_add_files)
-        _btn(FluentIcon.DELETE, "移除", "remove", self._on_remove_file)
-        _btn(FluentIcon.UP, "上移", "up", lambda: self._move_file(-1))
-        _btn(FluentIcon.DOWN, "下移", "down", lambda: self._move_file(1))
-        _sep()
-        _btn(FluentIcon.CHECKBOX, "全选", "all", lambda: self._set_all_selected(True))
-        _btn(FluentIcon.CLOSE, "全不选", "none", lambda: self._set_all_selected(False))
-        bl.addStretch(1)
-        _btn(FluentIcon.PLAY, "开始渲染", "render", self.renderRequested)
-        _btn(FluentIcon.CANCEL, "停止渲染", "stop", self.cancelRequested)
-        self._action_buttons["stop"].hide()
-        root.addWidget(bar)
+        _cmd(FluentIcon.FOLDER, "打开项目", "open", self.openProjectRequested)
+        _cmd(FluentIcon.SAVE, "保存项目", "save", self._on_save)
+        self.cmdBar.addSeparator()
+        _cmd(FluentIcon.FOLDER_ADD, "添加文件", "add", self._on_add_files)
+        _cmd(FluentIcon.DELETE, "移除", "remove", self._on_remove_file)
+        _cmd(FluentIcon.UP, "上移", "up", lambda: self._move_file(-1))
+        _cmd(FluentIcon.DOWN, "下移", "down", lambda: self._move_file(1))
+        self.cmdBar.addSeparator()
+        _cmd(FluentIcon.CHECKBOX, "全选", "all", lambda: self._set_all_selected(True))
+        _cmd(FluentIcon.CLOSE, "全不选", "none", lambda: self._set_all_selected(False))
+        # 渲染：单一动作，空闲=开始 / 渲染中=停止（见 _on_render_clicked）
+        self._render_action = _cmd(FluentIcon.PLAY, "开始渲染", "render",
+                                   self._on_render_clicked)
+        # 让按钮文字与图标并排显示（默认 IconOnly，需显式切换）
+        self.cmdBar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        root.addWidget(self.cmdBar)
 
         self.workerLabel = BodyLabel("")
         root.addWidget(self.workerLabel)
@@ -579,12 +572,11 @@ class QueuePage(QWidget):
     # ============================================================ 渲染状态
     def set_busy(self, busy: bool) -> None:
         """渲染中：禁用结构性操作与选项编辑，但树保持可用（不冻结）。"""
+        self._rendering = busy
         for key in ("open", "save", "add", "remove", "up", "down",
                     "all", "none"):
             self._action_buttons[key].setEnabled(not busy)
-        self._action_buttons["render"].setVisible(not busy)
-        self._action_buttons["stop"].setVisible(busy)
-        self._action_buttons["stop"].setEnabled(busy)
+        self._sync_render_action()
         for w in (self.cmbBlender, self.cmbSource, self.edOutdir,
                   self.edTemplate, self.btnBrowseBlender,
                   self.btnBrowseOut, self.btnDefaultTemplate,
@@ -595,6 +587,21 @@ class QueuePage(QWidget):
         else:
             self.workerLabel.setText("")
             self.overall_mode("hidden")
+
+    def _on_render_clicked(self) -> None:
+        if self._rendering:
+            self.cancelRequested.emit()
+        else:
+            self.renderRequested.emit()
+
+    def _sync_render_action(self) -> None:
+        act = self._action_buttons["render"]
+        if self._rendering:
+            act.setIcon(FluentIcon.CANCEL)
+            act.setText("停止渲染")
+        else:
+            act.setIcon(FluentIcon.PLAY)
+            act.setText("开始渲染")
 
     def overall_mode(self, mode: str) -> None:
         """mode: hidden（无任务）| busy（忙碌动画）| normal（数值进度）"""
