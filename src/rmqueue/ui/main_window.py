@@ -148,6 +148,10 @@ class MainWindow(FluentWindow):
             self._status("所选文件已在队列中（如需刷新请移除后重新添加）")
 
     def _start_probe(self, paths: list[str], exe: str) -> None:
+        if self._probe is not None and self._probe.isRunning():
+            return
+        self.page.overall_mode("busy")  # 忙碌动画：明确“正在加载”，避免以为卡死
+        self.page.set_worker_text(f"正在枚举 {len(paths)} 个文件…")
         self._probe = ProbeWorker(paths, exe, blender_probe.find_vendor_dir(), self)
         self._probe.fileProbed.connect(self._on_file_probed)
         self._probe.finished.connect(self._on_probe_finished)
@@ -164,6 +168,7 @@ class MainWindow(FluentWindow):
 
     def _on_probe_finished(self) -> None:
         self.page.refresh()
+        self.page.overall_mode("hidden")
         self._status("枚举完成")
 
     # ------------------------------------------------------ 渲染
@@ -202,35 +207,53 @@ class MainWindow(FluentWindow):
 
     def _on_file_started(self, path: str, total: int) -> None:
         self.page.refresh()  # 重建行/进度条注册表并保持全展开
+        self.page.overall_mode("normal")
         self.page.set_status(f"渲染中：{os.path.basename(path)}（{total} 张）")
-        self.page.set_overall(self._prev_done, self._prev_failed, self._grand_total)
+        self.page.set_overall(self._prev_done + self._prev_failed, self._grand_total)
 
     def _on_items_tick(self, path: str, items, done: int, failed: int,
                        total: int) -> None:
         self.page.on_items_tick(path, items, done, failed, total)
-        self.page.set_overall(self._prev_done + done,
-                              self._prev_failed + failed, self._grand_total)
-        current = next((e.get("name", "") for e in items
-                        if e.get("status") == "RENDERING"), "")
-        self.page.set_worker_text(f"当前：{current or '启动中'} · "
-                                  f"{self._prev_done + done + self._prev_failed + failed}"
-                                  f"/{self._grand_total}")
+        # 总进度平滑混算：已完成张（DONE/FAILED）按整张计 1，当前张按自身
+        # 进度（0..1，分块加权）映射到它的份额区间，避免“0%→10%”跳变
+        terminal = sum(1 for e in items
+                       if e.get("status") in ("DONE", "FAILED"))
+        partial = 0.0
+        current = ""
+        for e in items:
+            if e.get("status") == "RENDERING":
+                current = e.get("name", "")
+                partial = float(e.get("progress") or 0.0)
+                break
+        value = (self._prev_done + self._prev_failed + terminal + partial)
+        self.page.set_overall(value, self._grand_total)
+        # 左下角状态行：当前快照 + 采样/块细节 + 批次计数
+        running = next((e for e in items if e.get("status") == "RENDERING"), None)
+        details = f"当前：{current or '启动中'}"
+        if running is not None:
+            s, st = running.get("samples", 0), running.get("samples_total", 0)
+            td, tt = running.get("tiles_done", 0), running.get("tiles_total", 0)
+            if st:
+                details += f" · 采样 {s}/{st}"
+            if tt and tt > 1:
+                details += f" · 块 {min(int(td) + 1, int(tt))}/{tt}"
+        done_all = self._prev_done + done + self._prev_failed + failed
+        self.page.set_status(f"{details} ｜ 批次 {done_all}/{self._grand_total}")
 
     def _on_file_finished(self, path: str, summary: dict) -> None:
         self._prev_done += summary["done"]
         self._prev_failed += summary["failed"]
         self.page.refresh()
-        self.page.set_overall(self._prev_done, self._prev_failed, self._grand_total)
+        self.page.set_overall(self._prev_done + self._prev_failed, self._grand_total)
 
     def _on_run_finished(self, overview: dict) -> None:
         self.page.set_worker_text("")
-        self._set_busy(False)
+        self._set_busy(False)  # 会隐藏总进度条（无任务状态）
         self.page.refresh()
         cancelled = overview.get("cancelled")
         msg = overview.get("message", "")
         if not cancelled:
             done, failed = overview.get("done", 0), overview.get("failed", 0)
-            self.page.set_overall(done, failed, self._grand_total)
             self._status(f"{msg} —— 输出见各快照「输出」列",
                          level="ok" if failed == 0 else "warn")
         else:

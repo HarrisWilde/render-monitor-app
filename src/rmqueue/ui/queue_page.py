@@ -14,7 +14,7 @@ import os
 import subprocess
 import sys
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QTimer, Qt, Signal
 from PySide6.QtGui import QBrush, QColor, QGuiApplication
 from PySide6.QtWidgets import (
     QComboBox,
@@ -123,13 +123,19 @@ class QueuePage(QWidget):
         self.countLabel = BodyLabel("")
         head.addWidget(self.countLabel)
         head.addStretch(1)
+        self.lblPercent = QLabel("0.0%")
+        self.lblPercent.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        fm = self.lblPercent.fontMetrics()
+        self.lblPercent.setFixedWidth(fm.horizontalAdvance("100.0%") + 6)
         self.progressOverall = QProgressBar()
         self.progressOverall.setRange(0, 1000)
         self.progressOverall.setValue(0)
-        self.progressOverall.setFixedWidth(260)
-        self.progressOverall.setTextVisible(True)
-        self.progressOverall.setFormat("整体 %p%")
+        self.progressOverall.setFixedWidth(240)
+        self.progressOverall.setTextVisible(False)
         head.addWidget(self.progressOverall)
+        head.addWidget(self.lblPercent)
+        self.progressOverall.hide()
+        self.lblPercent.hide()
         root.addLayout(head)
 
         # ---- 队列操作卡片（分组）
@@ -375,9 +381,11 @@ class QueuePage(QWidget):
                         sc_item.addChild(sh_item)
                         bar = QProgressBar()
                         bar.setRange(0, 1000)
-                        bar.setValue(0)
-                        bar.setTextVisible(False)
-                        bar.setFixedWidth(120)
+                        # 完成态直接满格；百分比文字恒定在条内（固定宽度，无抖动）
+                        bar.setValue(1000 if shot.app_status == "DONE" else 0)
+                        bar.setTextVisible(True)
+                        bar.setFormat("%p%")
+                        bar.setFixedWidth(150)
                         self.tree.setItemWidget(sh_item, 2, bar)
                         key = (_norm(f.path), scene.name, shot.uid)
                         self._rows[key] = (sh_item, bar)
@@ -418,7 +426,9 @@ class QueuePage(QWidget):
             if f is not None:
                 for shot in f.all_shots():
                     shot.selected = checked
-        self.refresh()
+        # 不要在 itemChanged 信号内同步重建树（删除信号源节点可能崩溃），
+        # 延迟到事件循环安全时刻再 refresh
+        QTimer.singleShot(0, self.refresh)
 
     def _set_all_selected(self, value: bool) -> None:
         if self._queue is None:
@@ -539,11 +549,33 @@ class QueuePage(QWidget):
             self.workerLabel.setText("渲染中…")
         else:
             self.workerLabel.setText("")
-            self.progressOverall.setValue(0)
+            self.overall_mode("hidden")
 
-    def set_overall(self, done: int, failed: int, total: int) -> None:
-        if total > 0:
-            self.progressOverall.setValue(int((done + failed) / total * 1000))
+    def overall_mode(self, mode: str) -> None:
+        """mode: hidden（无任务）| busy（忙碌动画，不显示数值）| normal（数值进度）"""
+        if mode == "hidden":
+            self.progressOverall.hide()
+            self.lblPercent.hide()
+        elif mode == "busy":
+            self.progressOverall.show()
+            self.progressOverall.setRange(0, 0)  # 忙碌动画（不定量）
+            self.lblPercent.hide()
+        else:  # normal
+            self.progressOverall.show()
+            self.progressOverall.setRange(0, 1000)
+            self.lblPercent.show()
+
+    def set_overall(self, value, total: int) -> None:
+        """总进度：value=已完成权重（含当前张部分进度，可为浮点），total=批次总数。
+
+        百分比取一位小数并填充到固定宽度，杜绝数字位长变化引起的抖动。
+        """
+        if not total or total <= 0:
+            return
+        frac = max(0.0, min(float(value) / total, 1.0))
+        self.progressOverall.setRange(0, 1000)
+        self.progressOverall.setValue(int(frac * 1000))
+        self.lblPercent.setText(f"{frac * 100:.1f}%")
 
     def set_worker_text(self, text: str) -> None:
         self.workerLabel.setText(text)
@@ -561,14 +593,15 @@ class QueuePage(QWidget):
                 continue
             item, bar = row
             status = j.get("status", "PENDING")
+            # 状态列只显示稳定文字（采样/块细节放左下角状态行 + 悬停提示）
             item.setText(1, status_text(status))
             item.setForeground(1, QBrush(_STATUS_COLORS.get(
                 status, _STATUS_COLORS["PENDING"])))
             samples = j.get("samples", 0)
             samples_total = j.get("samples_total", 0)
-            if status == "RENDERING" and samples_total:
-                item.setText(1, f"渲染中 {samples}/{samples_total}")
-                item.setToolTip(3, f"采样 {samples}/{samples_total}")
+            if status == "RENDERING":
+                item.setToolTip(3, f"采样 {samples}/{samples_total}"
+                                if samples_total else "渲染中…")
             elif status == "FAILED":
                 item.setText(3, j.get("error") or item.text(3))
                 item.setToolTip(3, item.text(3))
@@ -577,6 +610,8 @@ class QueuePage(QWidget):
                 item.setToolTip(3, j.get("path"))
             progress = float(j.get("progress") or 0.0)
             bar.setValue(int(max(0.0, min(progress, 1.0)) * 1000))
+            if status == "DONE":
+                bar.setValue(1000)
 
     # ============================================================ 配置
     def _update_resolved_hint(self) -> None:

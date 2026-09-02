@@ -64,6 +64,7 @@ RENDER_SCRIPT = textwrap.dedent(
         from render_monitor import core
         from render_monitor import utils as rm_utils
         from rmqueue import naming, progress as rprogress
+        from rmqueue import tile_progress as rm_prog
 
         with open(jobs_json, encoding="utf-8") as f:
             jobs = json.load(f)
@@ -71,7 +72,8 @@ RENDER_SCRIPT = textwrap.dedent(
             {"scene": j["scene"], "uid": j["uid"], "index": j["index"],
              "name": j.get("name", ""), "status": "PENDING",
              "path": "", "error": "", "progress": 0.0,
-             "samples": 0, "samples_total": 0}
+             "samples": 0, "samples_total": 0,
+             "tiles_done": 0, "tiles_total": 1}
             for j in jobs
         ]
         total = len(reported)
@@ -80,8 +82,10 @@ RENDER_SCRIPT = textwrap.dedent(
             rprogress.write_file(progress_path,
                                  {"state": state, "total": total, "jobs": reported})
 
-        def _make_progress_handler(entry):
-            # render_stats 回调：把采样/分块进度写入当前项（0.5s 节流）
+        def _make_progress_handler(entry, tile_weights):
+            # render_stats 回调：与插件 rm_job 一致 —— 已完成块按像素权重
+            # 加权 + 当前块按采样比例插值；块切换瞬间（cur 残留满格而 td 已
+            # +1）不重复计入；单调递增；0.5s 节流写回。
             last = [0.0]
 
             def handler(stats_str):
@@ -93,15 +97,17 @@ RENDER_SCRIPT = textwrap.dedent(
                     tt = parsed.get("tiles_total") or 1
                     entry["samples"] = cur
                     entry["samples_total"] = ttl
-                    if ttl > 0:
-                        if tt > 1 and tt >= td + 1:
-                            entry["progress"] = min((td + cur / ttl) / tt, 1.0)
-                        else:
-                            entry["progress"] = min(cur / ttl, 1.0)
-                    elif tt > 1 and td:
-                        entry["progress"] = min(td / tt, 1.0)
-                    if any(k in stats_str
-                           for k in ("Finished", "Denoising", "Finishing")):
+                    entry["tiles_done"] = td
+                    entry["tiles_total"] = tt
+                    new_p = rm_prog.shot_progress(
+                        cur, ttl, td, tt, tile_weights,
+                        entry.get("progress", -1.0))
+                    if new_p is not None:
+                        entry["progress"] = new_p
+                    # 收尾（去噪/合成/保存）阶段：进度置满
+                    if any(k in stats_str for k in
+                           ("Finished", "Denoising", "Finishing",
+                            "Reading full buffer")):
                         entry["progress"] = 1.0
                     now = time.monotonic()
                     if now - last[0] >= 0.5:
@@ -147,7 +153,20 @@ RENDER_SCRIPT = textwrap.dedent(
                 tmp_path = path + f".rmtmp{os.urandom(4).hex()}"
                 actual_path = tmp_path + "." + ext
                 scene.render.filepath = tmp_path
-                handler = _make_progress_handler(entry)
+                # 与插件一致：按当前分辨率/平铺尺寸计算各分块像素权重
+                try:
+                    tile_size = getattr(scene.cycles, "tile_size", 2048) or 2048
+                except AttributeError:
+                    tile_size = 2048
+                try:
+                    res_w = int(scene.render.resolution_x *
+                                scene.render.resolution_percentage / 100)
+                    res_h = int(scene.render.resolution_y *
+                                scene.render.resolution_percentage / 100)
+                except (AttributeError, TypeError):
+                    res_w = res_h = 1
+                tile_weights = rm_utils.compute_tile_weights(res_w, res_h, tile_size)
+                handler = _make_progress_handler(entry, tile_weights)
                 bpy.app.handlers.render_stats.append(handler)
                 bpy.ops.render.render(scene=scene.name, write_still=True,
                                       use_viewport=False)
