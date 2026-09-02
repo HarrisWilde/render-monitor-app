@@ -2,8 +2,8 @@
 
 - ProbeWorker：串行对多个 .blend 跑 blender -b 探针，逐个发回结果；
 - RenderWorker：严格串行渲染——按文件分组，逐文件 spawn/poll/finish，
-  轮询 mmap 进度发 tick，支持中途取消（终止当前进程、已完成的保留、
-  未开始的保持待渲染）。
+  轮询 mmap 进度并通过 itemsTick 把每个快照的最新状态/进度回传 UI，
+  支持中途取消（终止当前进程、已完成保留、未开始保持待渲染）。
 """
 
 from __future__ import annotations
@@ -50,13 +50,13 @@ class RenderWorker(QThread):
     """严格串行渲染调度（单 worker，一次一个 blender 子进程）。
 
     fileStarted(path, total_jobs)
-    tick(current_name, done, failed, total)
+    itemsTick(path, jobs_payload, done, failed, total)   # 逐快照状态/进度
     fileFinished(path, summary_dict)
     runFinished(overview_dict)  # {cancelled, message, done, failed, details}
     """
 
     fileStarted = Signal(str, int)
-    tick = Signal(str, int, int, int)
+    itemsTick = Signal(str, object, int, int, int)
     fileFinished = Signal(str, object)
     runFinished = Signal(object)
 
@@ -70,16 +70,33 @@ class RenderWorker(QThread):
         self._template = template
         self._cancel = False
         # 渲染开始时快照勾选状态 → 按文件分组的作业清单（全局扁平序号）
+        use_project_out = queue.settings.output_source == "project"
         groups: "OrderedDict[str, list[dict]]" = OrderedDict()
         for job in queue.flatten_selected():
-            groups.setdefault(job.file_path, []).append({
+            item = {
                 "scene": job.scene,
                 "uid": job.uid,
                 "index": job.index,
                 "name": job.name,
-            })
+            }
+            if use_project_out:
+                scene_obj = self._scene_of(queue, job.file_path, job.scene)
+                if scene_obj is not None and scene_obj.output_dir:
+                    item["outdir"] = scene_obj.resolve_output_dir(
+                        job.file_path, outdir)
+            groups.setdefault(job.file_path, []).append(item)
         self._groups = groups
         self._total_jobs = sum(len(v) for v in groups.values())
+
+    @staticmethod
+    def _scene_of(queue: Queue, file_path: str, scene_name: str):
+        f = queue.file_by_path(file_path)
+        if f is None:
+            return None
+        for sc in f.scenes:
+            if sc.name == scene_name:
+                return sc
+        return None
 
     def cancel(self) -> None:
         self._cancel = True
@@ -119,16 +136,13 @@ class RenderWorker(QThread):
                         break
                     payload = render_session.poll_session(handle)
                     if payload:
-                        cur = ""
-                        done = failed = 0
-                        for e in payload.get("jobs", []):
-                            if e.get("status") == render_session.STATUS_RENDERING:
-                                cur = e.get("name", "")
-                            elif e.get("status") == render_session.STATUS_DONE:
-                                done += 1
-                            elif e.get("status") == render_session.STATUS_FAILED:
-                                failed += 1
-                        self.tick.emit(cur, done, failed, payload.get("total", 0))
+                        cur_items = payload.get("jobs", [])
+                        done = sum(1 for e in cur_items
+                                   if e.get("status") == render_session.STATUS_DONE)
+                        failed = sum(1 for e in cur_items
+                                     if e.get("status") == render_session.STATUS_FAILED)
+                        self.itemsTick.emit(
+                            path, cur_items, done, failed, payload.get("total", 0))
                     time.sleep(0.5)
                 rc = handle["process"].poll()
                 payload = render_session.poll_session(handle)

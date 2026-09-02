@@ -33,7 +33,14 @@ def run_one(exe: str) -> None:
     try:
         fixture = os.path.join(tmp.name, "job_scene.blend")
         proc = build_fixture(exe, fixture, VENDOR_DIR)
-        assert proc.returncode == 0, proc.stderr[-3000:]
+        if proc.returncode != 0 or not os.path.isfile(fixture):
+            print("[FAIL] fixture 未落盘 rc=", proc.returncode,
+                  "exists=", os.path.isfile(fixture))
+            print("stdout tail:\n",
+                  "\n".join((proc.stdout or "").splitlines()[-20:]))
+            print("stderr tail:\n",
+                  "\n".join((proc.stderr or "").splitlines()[-20:]))
+            raise SystemExit(1)
 
         probe = blender_probe.probe_blend(exe, fixture, VENDOR_DIR)
         assert probe["ok"], probe["message"]

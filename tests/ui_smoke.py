@@ -71,23 +71,36 @@ def main() -> int:
     sc.setCheckState(0, Qt.CheckState.Unchecked)
     app.processEvents()
     assert q.shot_by(r"C:\demo\scene.blend", "Scene B", "u4").selected is False
+    print("step: scene uncheck ok", flush=True)
 
     # 全选/全不选按钮
-    win.page.btnAll.click()
+    win.page.btn_all.click()
     app.processEvents()
     assert len(q.flatten_selected()) == 4
-    win.page.btnNone.click()
+    print("step: btn_all ok", flush=True)
+    win.page.btn_none.click()
     app.processEvents()
     assert len(q.flatten_selected()) == 0
-    win.page.btnAll.click()
+    print("step: btn_none ok", flush=True)
+    win.page.btn_all.click()
     app.processEvents()
+    print("step: btn_all2 ok", flush=True)
 
-    # 开始渲染的校验路径（未配置 Blender/输出目录时给出提示而不崩溃）
+    # 开始渲染的校验路径（显式空配置 → 提示而不启动，防止误起真实渲染）
+    win.page.config_set({
+        "blender_exe": "", "output_dir": "",
+        "output_source": "global", "file_template": "{file}/{scene}/{name} {index}"})
+    app.processEvents()
+    print("step: config_set ok", flush=True)
     win._start_render()
     app.processEvents()
     assert win._render is None  # 校验失败不应启动
+    print("step: start_render guard ok", flush=True)
 
-    # 关闭
+    # 关闭（若有 worker 残留则先取消等待）
+    if win._render is not None:
+        win._render.cancel()
+        win._render.wait(3000)
     win.close()
     app.processEvents()
     print("UI SMOKE OK")

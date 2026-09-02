@@ -88,8 +88,14 @@ FIXTURE_SCRIPT = textwrap.dedent(
     _shot(scene_a, "A2", selected=False)
     _shot(scene_a, "A3", selected=True)
 
-    # --- 场景 B：1 个快照
-    scene_b = bpy.data.scenes.new("Scene B")
+    # --- 场景 B：优先 ops.scene.new（视图层/master collection 立即可用，
+    #   兼容 Blender 5.2；bpy.data.scenes.new 在该版本可能不物化视图层）
+    try:
+        bpy.ops.scene.new(type="NEW")
+        scene_b = bpy.context.scene
+        scene_b.name = "Scene B"
+    except Exception:
+        scene_b = bpy.data.scenes.new("Scene B")
     if scene_b.world is None and bpy.data.worlds:
         scene_b.world = bpy.data.worlds[0]
     _empty(scene_b, "Cylinder_B", (0.0, 0.0, 3.0))

@@ -53,7 +53,7 @@ def run_one(exe: str) -> None:
         scenes = {s["name"]: s for s in data["scenes"]}
         assert set(scenes) == {"Scene A", "Scene B"}, scenes.keys()
         shots_a = {s["name"]: s for s in scenes["Scene A"]["shots"]}
-        assert set(shots_a) == {"A1", "A2"}, shots_a.keys()
+        assert set(shots_a) == {"A1", "A2", "A3"}, shots_a.keys()
         assert shots_a["A1"]["status"] == "DONE"
         assert shots_a["A1"]["output"].endswith("A1.png")
         assert shots_a["A2"]["selected"] is False
@@ -63,10 +63,11 @@ def run_one(exe: str) -> None:
         q = Queue()
         stats = q.merge_probe(fixture_path, data["scenes"])
         assert stats == {"scenes_added": 2, "scenes_removed": 0,
-                         "shots_added": 3, "shots_removed": 0}, stats
+                         "shots_added": 4, "shots_removed": 0}, stats
         jobs = q.flatten_selected()
         assert [(j.scene, j.name) for j in jobs] == [
-            ("Scene A", "A1"), ("Scene B", "B1")], jobs  # A2 未勾选不入列
+            ("Scene A", "A1"), ("Scene A", "A3"),
+            ("Scene B", "B1")], jobs  # A2 未勾选不入列
         shot_a1 = q.shot_by(fixture_path, "Scene A", shots_a["A1"]["uid"])
         assert shot_a1.blend_status == "DONE"
         # 应用层标记失败后重新 merge，状态应保留

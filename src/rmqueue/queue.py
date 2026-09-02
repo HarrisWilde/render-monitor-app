@@ -55,16 +55,38 @@ class QueueShot:
 class QueueScene:
     name: str
     shots: list[QueueShot] = field(default_factory=list)
+    # 场景在 .blend 里保存的输出目录（插件 rm_output_dir 原文："" | "//" | 绝对/相对）
+    output_dir: str = ""
 
     def to_dict(self) -> dict:
-        return {"name": self.name, "shots": [s.to_dict() for s in self.shots]}
+        d = {"name": self.name, "shots": [s.to_dict() for s in self.shots]}
+        if self.output_dir:
+            d["output_dir"] = self.output_dir
+        return d
 
     @classmethod
     def from_dict(cls, d: dict) -> "QueueScene":
         return cls(
             name=str(d.get("name", "")),
             shots=[QueueShot.from_dict(s) for s in d.get("shots", [])],
+            output_dir=str(d.get("output_dir", "")),
         )
+
+    def resolve_output_dir(self, blend_file: str, fallback: str = "") -> str:
+        """按 Blender 语义解析该场景的输出目录（// → blend 所在目录）。
+
+        场景未设置（""）时回退 fallback。
+        """
+        raw = self.output_dir
+        if not raw:
+            return fallback
+        blend_dir = os.path.dirname(os.path.abspath(blend_file))
+        if raw == "//":
+            return blend_dir
+        if raw.startswith("//"):
+            rest = raw[2:].replace("/", os.sep)
+            return os.path.normpath(os.path.join(blend_dir, rest))
+        return os.path.abspath(raw)
 
 
 @dataclass
@@ -91,12 +113,15 @@ class ProjectSettings:
     output_dir: str = ""
     file_template: str = "{file}/{scene}/{name} {index}"
     blender_exe: str = ""
+    # 输出目录来源：global=应用全局路径；project=跟随 .blend 内各场景插件设置
+    output_source: str = "global"
 
     def to_dict(self) -> dict:
         return {
             "output_dir": self.output_dir,
             "file_template": self.file_template,
             "blender_exe": self.blender_exe,
+            "output_source": self.output_source,
         }
 
     @classmethod
@@ -106,6 +131,7 @@ class ProjectSettings:
             output_dir=str(d.get("output_dir", "")),
             file_template=str(d.get("file_template", "{file}/{scene}/{name} {index}")),
             blender_exe=str(d.get("blender_exe", "")),
+            output_source=str(d.get("output_source", "global")),
         )
 
 
@@ -185,6 +211,9 @@ class Queue:
             if old_scene is None:
                 old_scene = QueueScene(name=scene_name)
                 stats["scenes_added"] += 1
+            # 探针携带场景输出目录（插件 rm_output_dir），刷新
+            if "rm_output_dir" in sd:
+                old_scene.output_dir = str(sd.get("rm_output_dir") or "")
             old_by_uid = {s.uid: s for s in old_scene.shots}
             new_shots: list[QueueShot] = []
             probe_uids = set()

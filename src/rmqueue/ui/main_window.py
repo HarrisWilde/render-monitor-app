@@ -1,4 +1,10 @@
-"""主窗口：把队列页/设置页/后台 worker 编排起来（轻量控制器）。"""
+"""主窗口：编排队列页/设置页与后台 worker（轻量控制器）。
+
+- 渲染配置（Blender/输出目录/来源/模板）在首页「渲染选项」卡，随项目与
+  QSettings 双持久化；
+- 渲染期间维护整体进度（已完成文件累计 + 当前文件实时计数）；
+- 逐快照 tick 直接刷队列页行内进度条（不整树重建）。
+"""
 
 from __future__ import annotations
 
@@ -12,17 +18,28 @@ from qfluentwidgets import (
     FluentWindow,
     InfoBar,
     InfoBarPosition,
+    setTheme,
+    Theme,
 )
 
 from .. import blender_probe
-from ..blender_tools import pick_default
 from ..queue import Queue
 from .queue_page import QueuePage
-from .settings_page import SettingsPage
+from .settings_page import (
+    THEME_AUTO,
+    THEME_DARK,
+    THEME_LIGHT,
+    SettingsPage,
+)
 from .workers import ProbeWorker, RenderWorker
 
 _APP_ORG = "RenderMonitorQueue"
 _APP_NAME = "rmqueue"
+_THEME_QT = {
+    THEME_LIGHT: Theme.LIGHT,
+    THEME_DARK: Theme.DARK,
+    THEME_AUTO: Theme.AUTO,
+}
 
 
 class MainWindow(FluentWindow):
@@ -33,6 +50,10 @@ class MainWindow(FluentWindow):
         self._probe: ProbeWorker | None = None
         self._render: RenderWorker | None = None
         self._prefs = QSettings(_APP_ORG, _APP_NAME)
+        # 整体进度：已完成文件累计 + 批次总数
+        self._prev_done = 0
+        self._prev_failed = 0
+        self._grand_total = 0
 
         self.page = QueuePage(self)
         self.page.setObjectName("queueInterface")
@@ -42,26 +63,38 @@ class MainWindow(FluentWindow):
         self.addSubInterface(self.settings_page, FluentIcon.SETTING, "设置")
 
         self.setWindowTitle("Render Monitor Queue 渲染排队器")
-        self.resize(1180, 760)
+        self.resize(1200, 820)
 
-        # 恢复应用级默认并接线
-        self.settings_page.populate_blender(keep_current=False)
-        self.settings_page.set_values(
-            blender_exe=self._prefs.value("blender_exe", "") or
-            (pick_default().exe if pick_default() else ""),
-            outdir=self._prefs.value("output_dir", ""),
-            template=self._prefs.value("file_template", ""),
-        )
+        # 主题恢复
+        theme = self._prefs.value("theme", THEME_LIGHT)
+        self._apply_theme(str(theme))
+        self.settings_page.set_theme(str(theme))
+
+        # 首页渲染选项：默认值 = QSettings → 自动探测兜底
+        self.page.populate_blender(keep_current=False)
+        exe = self._prefs.value("blender_exe", "")
+        if not exe:
+            from ..blender_tools import pick_default
+            picked = pick_default()
+            exe = picked.exe if picked else ""
+        self.page.config_set({
+            "blender_exe": exe,
+            "output_dir": self._prefs.value("output_dir", ""),
+            "output_source": self._prefs.value("output_source", "global"),
+            "file_template": self._prefs.value(
+                "file_template", "{file}/{scene}/{name} {index}"),
+        })
         self.page.set_queue(self.queue)
 
-        # 页面信号
+        # 信号
         self.page.filesAdded.connect(self._on_add_files)
         self.page.renderRequested.connect(self._start_render)
         self.page.cancelRequested.connect(self._cancel_render)
         self.page.openProjectRequested.connect(self._open_project)
         self.page.saveProjectRequested.connect(self._save_project)
         self.page.saveProjectAsRequested.connect(self._save_project_as)
-        self.settings_page.settingsChanged.connect(self._persist_prefs)
+        self.page.configChanged.connect(self._persist_prefs)
+        self.settings_page.themeChanged.connect(self._apply_theme)
         self._status("就绪：拖入 .blend 文件，或点「添加文件」")
 
     # ---------------------------------------------------------- 基础工具
@@ -74,23 +107,26 @@ class MainWindow(FluentWindow):
         elif level == "err":
             InfoBar.error("错误", text, duration=8000, parent=self)
 
-    def _resolve_settings(self) -> tuple[str, str, str]:
-        exe = self.settings_page.blender_exe()
-        outdir = self.settings_page.outdir()
-        template = self.settings_page.template()
-        return exe, outdir, template
+    def _config(self) -> dict:
+        return self.page.config_get()
+
+    def _apply_theme(self, theme: str) -> None:
+        setTheme(_THEME_QT.get(theme, Theme.LIGHT))
+        self._prefs.setValue("theme", theme)
 
     def _persist_prefs(self) -> None:
-        exe, outdir, template = self._resolve_settings()
-        self._prefs.setValue("blender_exe", exe)
-        self._prefs.setValue("output_dir", outdir)
-        self._prefs.setValue("file_template", template)
+        cfg = self._config()
+        self._prefs.setValue("blender_exe", cfg["blender_exe"])
+        self._prefs.setValue("output_dir", cfg["output_dir"])
+        self._prefs.setValue("output_source", cfg["output_source"])
+        self._prefs.setValue("file_template", cfg["file_template"])
 
     def _capture_project_settings(self) -> None:
-        exe, outdir, template = self._resolve_settings()
-        self.queue.settings.blender_exe = exe
-        self.queue.settings.output_dir = outdir
-        self.queue.settings.file_template = template
+        cfg = self._config()
+        self.queue.settings.blender_exe = cfg["blender_exe"]
+        self.queue.settings.output_dir = cfg["output_dir"]
+        self.queue.settings.output_source = cfg["output_source"]
+        self.queue.settings.file_template = cfg["file_template"]
 
     def _set_busy(self, busy: bool) -> None:
         self._busy = busy
@@ -100,19 +136,16 @@ class MainWindow(FluentWindow):
     def _on_add_files(self, paths: list[str]) -> None:
         if self._busy:
             return
-        exe, _out, _tpl = self._resolve_settings()
+        exe = self._config()["blender_exe"]
         if not exe or not os.path.isfile(exe):
-            self._status("请先在「设置」中选择可用的 Blender", level="warn")
+            self._status("请先在上方「渲染选项」中选择可用的 Blender", level="warn")
             return
-        fresh = []
-        for p in paths:
-            if self.queue.file_by_path(p) is None:
-                fresh.append(p)
+        fresh = [p for p in paths if self.queue.file_by_path(p) is None]
         if fresh:
             self.page.set_status(f"正在枚举 {len(fresh)} 个文件（后台 Blender）…")
             self._start_probe(fresh, exe)
         else:
-            self._status("所选文件已在队列中（如需刷新请移除后重新添加）", level="info")
+            self._status("所选文件已在队列中（如需刷新请移除后重新添加）")
 
     def _start_probe(self, paths: list[str], exe: str) -> None:
         self._probe = ProbeWorker(paths, exe, blender_probe.find_vendor_dir(), self)
@@ -126,9 +159,8 @@ class MainWindow(FluentWindow):
             return
         stats = self.queue.merge_probe(path, data.get("scenes", []))
         self.page.refresh()
-        added = stats["shots_added"]
         self._status(f"{os.path.basename(path)}：{data.get('blender_version', '?')}，"
-                     f"新增 {added} 个快照", level="info")
+                     f"新增 {stats['shots_added']} 个快照")
 
     def _on_probe_finished(self) -> None:
         self.page.refresh()
@@ -138,49 +170,71 @@ class MainWindow(FluentWindow):
     def _start_render(self) -> None:
         if self._busy or self._render is not None:
             return
-        exe, outdir, template = self._resolve_settings()
+        cfg = self._config()
+        exe, outdir = cfg["blender_exe"], cfg["output_dir"]
+        template = cfg["file_template"]
         if not exe or not os.path.isfile(exe):
-            self._status("请先在「设置」中配置 Blender", level="warn")
+            self._status("请先在首页「渲染选项」中配置 Blender", level="warn")
             return
         if not outdir or not os.path.isdir(outdir):
-            self._status("请先在「设置」中选择存在的输出目录", level="warn")
+            self._status("请先在首页「渲染选项」中设置存在的全局输出目录", level="warn")
             return
+        if cfg["output_source"] == "project":
+            # 项目模式仅要求各场景有目录/或全局兜底；全局仍需存在作为兜底
+            pass
         self._capture_project_settings()
         total = len(self.queue.flatten_selected())
         if total == 0:
             self._status("没有勾选的快照（请先添加文件并勾选）", level="warn")
             return
+        self._prev_done = self._prev_failed = 0
+        self._grand_total = total
         self._set_busy(True)
         self.page.set_status(f"开始渲染（{total} 张）…")
         self._render = RenderWorker(
             self.queue, exe, blender_probe.find_vendor_dir(), outdir, template, self,
         )
         self._render.fileStarted.connect(self._on_file_started)
-        self._render.tick.connect(self._on_render_tick)
-        self._render.runFinished.connect(self._on_render_finished)
+        self._render.itemsTick.connect(self._on_items_tick)
+        self._render.fileFinished.connect(self._on_file_finished)
+        self._render.runFinished.connect(self._on_run_finished)
         self._render.start()
 
     def _on_file_started(self, path: str, total: int) -> None:
-        self.page.refresh()
+        self.page.refresh()  # 重建行/进度条注册表并保持全展开
         self.page.set_status(f"渲染中：{os.path.basename(path)}（{total} 张）")
+        self.page.set_overall(self._prev_done, self._prev_failed, self._grand_total)
 
-    def _on_render_tick(self, current: str, done: int, failed: int, total: int) -> None:
-        text = f"当前：{current or '启动中'} · {done + failed}/{total}"
-        self.page.set_worker_text(text)
+    def _on_items_tick(self, path: str, items, done: int, failed: int,
+                       total: int) -> None:
+        self.page.on_items_tick(path, items, done, failed, total)
+        self.page.set_overall(self._prev_done + done,
+                              self._prev_failed + failed, self._grand_total)
+        current = next((e.get("name", "") for e in items
+                        if e.get("status") == "RENDERING"), "")
+        self.page.set_worker_text(f"当前：{current or '启动中'} · "
+                                  f"{self._prev_done + done + self._prev_failed + failed}"
+                                  f"/{self._grand_total}")
 
-    def _on_render_finished(self, overview: dict) -> None:
+    def _on_file_finished(self, path: str, summary: dict) -> None:
+        self._prev_done += summary["done"]
+        self._prev_failed += summary["failed"]
+        self.page.refresh()
+        self.page.set_overall(self._prev_done, self._prev_failed, self._grand_total)
+
+    def _on_run_finished(self, overview: dict) -> None:
         self.page.set_worker_text("")
         self._set_busy(False)
         self.page.refresh()
         cancelled = overview.get("cancelled")
-        level = "ok" if not cancelled else "info"
         msg = overview.get("message", "")
-        self._status(msg, level=level)
         if not cancelled:
-            done = overview.get("done", 0)
-            failed = overview.get("failed", 0)
-            self._status(f"{msg} —— 输出目录：{self.settings_page.outdir()}",
+            done, failed = overview.get("done", 0), overview.get("failed", 0)
+            self.page.set_overall(done, failed, self._grand_total)
+            self._status(f"{msg} —— 输出见各快照「输出」列",
                          level="ok" if failed == 0 else "warn")
+        else:
+            self._status(msg, level="info")
         self._render = None
 
     def _cancel_render(self) -> None:
@@ -201,10 +255,12 @@ class MainWindow(FluentWindow):
             return
         self.queue = q
         self.page.set_queue(q)
-        self.settings_page.set_values(
-            blender_exe=q.settings.blender_exe, outdir=q.settings.output_dir,
-            template=q.settings.file_template,
-        )
+        self.page.config_set({
+            "blender_exe": q.settings.blender_exe,
+            "output_dir": q.settings.output_dir,
+            "output_source": q.settings.output_source,
+            "file_template": q.settings.file_template,
+        })
         self.page.refresh()
         self._status(f"已打开项目：{os.path.basename(path)}")
 

@@ -1,12 +1,11 @@
 """单 .blend 文件的串行渲染会话（纯逻辑 + 子进程编排，不含 Qt）。
 
-复用插件 rm_job 语义，并提升为独立应用可用的形式：
 - 每次会话：`blender -b <file> -P render_script.py -- ...`；
 - 会话内按队列顺序遍历（可跨场景），每项应用快照 → 渲染 → 原子替换；
-- 进度经 progress.mmap 协议轮询（应用与子进程共用同一实现）；
-- 收尾做状态一致性修正（崩溃/致命错误/用户取消），与插件 _finish_session 一致。
-
-进程生命周期由 Qt worker 驱动（spawn/poll/stop/finish），本模块保持无 GUI 依赖。
+- 作业可携带各自 outdir（跟随项目内场景插件设置时按场景分别输出）；
+- 渲染期间 render_stats 回调把采样/分块进度写回 mmap（0.5s 节流），
+  供 UI 每个快照的进度条实时更新；
+- 收尾做状态一致性修正（崩溃/致命/取消），与插件 _finish_session 一致。
 """
 
 from __future__ import annotations
@@ -38,6 +37,7 @@ RENDER_SCRIPT = textwrap.dedent(
     import json
     import os
     import sys
+    import time
     import traceback
 
     def _main():
@@ -62,6 +62,7 @@ RENDER_SCRIPT = textwrap.dedent(
         import render_monitor
         render_monitor.register()
         from render_monitor import core
+        from render_monitor import utils as rm_utils
         from rmqueue import naming, progress as rprogress
 
         with open(jobs_json, encoding="utf-8") as f:
@@ -69,7 +70,8 @@ RENDER_SCRIPT = textwrap.dedent(
         reported = [
             {"scene": j["scene"], "uid": j["uid"], "index": j["index"],
              "name": j.get("name", ""), "status": "PENDING",
-             "path": "", "error": ""}
+             "path": "", "error": "", "progress": 0.0,
+             "samples": 0, "samples_total": 0}
             for j in jobs
         ]
         total = len(reported)
@@ -78,12 +80,47 @@ RENDER_SCRIPT = textwrap.dedent(
             rprogress.write_file(progress_path,
                                  {"state": state, "total": total, "jobs": reported})
 
+        def _make_progress_handler(entry):
+            # render_stats 回调：把采样/分块进度写入当前项（0.5s 节流）
+            last = [0.0]
+
+            def handler(stats_str):
+                try:
+                    parsed = rm_utils.parse_render_stats(stats_str)
+                    cur = parsed.get("samples") or 0
+                    ttl = parsed.get("samples_total") or 0
+                    td = parsed.get("tiles_done") or 0
+                    tt = parsed.get("tiles_total") or 1
+                    entry["samples"] = cur
+                    entry["samples_total"] = ttl
+                    if ttl > 0:
+                        if tt > 1 and tt >= td + 1:
+                            entry["progress"] = min((td + cur / ttl) / tt, 1.0)
+                        else:
+                            entry["progress"] = min(cur / ttl, 1.0)
+                    elif tt > 1 and td:
+                        entry["progress"] = min(td / tt, 1.0)
+                    if any(k in stats_str
+                           for k in ("Finished", "Denoising", "Finishing")):
+                        entry["progress"] = 1.0
+                    now = time.monotonic()
+                    if now - last[0] >= 0.5:
+                        last[0] = now
+                        _write("running")
+                except Exception:
+                    pass
+
+            return handler
+
         _write("running")
         for job, entry in zip(jobs, reported):
             entry["status"] = "RENDERING"
+            entry["progress"] = 0.0
             _write("running")
             actual_path = ""
+            handler = None
             try:
+                job_outdir = job.get("outdir") or outdir
                 scene = bpy.data.scenes.get(job["scene"])
                 if scene is None:
                     raise RuntimeError(f"场景不存在: {job['scene']}")
@@ -100,8 +137,8 @@ RENDER_SCRIPT = textwrap.dedent(
                     template, bpy.data.filepath, scene.name, shot.name,
                     int(job["index"]), frame=int(scene.frame_current),
                 )
-                path = naming.build_abs_output_path(outdir, rel, ext)
-                os.makedirs(os.path.dirname(path) or outdir, exist_ok=True)
+                path = naming.build_abs_output_path(job_outdir, rel, ext)
+                os.makedirs(os.path.dirname(path) or job_outdir, exist_ok=True)
                 # 原子替换防覆盖：先渲染到唯一临时文件，成功后再替换
                 try:
                     scene.render.use_file_extension = True
@@ -110,8 +147,11 @@ RENDER_SCRIPT = textwrap.dedent(
                 tmp_path = path + f".rmtmp{os.urandom(4).hex()}"
                 actual_path = tmp_path + "." + ext
                 scene.render.filepath = tmp_path
+                handler = _make_progress_handler(entry)
+                bpy.app.handlers.render_stats.append(handler)
                 bpy.ops.render.render(scene=scene.name, write_still=True,
                                       use_viewport=False)
+                entry["progress"] = 1.0
                 if not (os.path.exists(actual_path)
                         and os.path.getsize(actual_path) > 0):
                     raise RuntimeError(f"渲染未生成输出文件（可能被取消或写盘失败）: {path}")
@@ -127,6 +167,12 @@ RENDER_SCRIPT = textwrap.dedent(
                         os.remove(actual_path)
                 except OSError:
                     pass
+            finally:
+                if handler is not None:
+                    try:
+                        bpy.app.handlers.render_stats.remove(handler)
+                    except (ValueError, TypeError):
+                        pass
             _write("running")
         _write("done")
         print(f"[rmq-render] done ok={sum(1 for e in reported if e['status']=='DONE')} "
@@ -142,7 +188,7 @@ RENDER_SCRIPT = textwrap.dedent(
             try:
                 marker = sys.argv.index("--")
                 args = sys.argv[marker + 1:]
-                if len(args) >= 7:
+                if len(args) >= 6:
                     from rmqueue import progress as rp
                     rp.write_file(args[5], {"state": "error", "total": 0,
                                             "jobs": [{"scene": "", "uid": "",
@@ -181,7 +227,7 @@ def spawn_session(
     use_snapshot_frame: bool = True,
     log_dir: str | None = None,
 ) -> dict:
-    """启动一次单文件渲染会话。jobs 形如 [{scene,uid,index,name}]。
+    """启动一次单文件渲染会话。jobs 形如 [{scene,uid,index,name,outdir?}]。
 
     返回句柄：{process, tmpdir, progress_path, jobs_json, log_path,
     blend_file, jobs, outdir, template, vendor_dir, app_src}
@@ -329,12 +375,6 @@ def finish_session(
         return {"done": done, "failed": failed, "message": message,
                 "returncode": returncode, "cancelled": cancelled}
     finally:
-        # 清理临时目录（含进度文件/日志/副本）
         import shutil
 
         shutil.rmtree(handle["tmpdir"], ignore_errors=True)
-
-
-def summarize(message: str, done: int, failed: int) -> str:
-    """消息组合（供 UI 单文件汇总复用）。"""
-    return f"{message}（本文件成功 {done}，失败 {failed}）"

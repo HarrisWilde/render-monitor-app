@@ -1,38 +1,30 @@
-"""设置页：Blender 可执行文件、输出目录、文件命名模板。
+"""设置页 v2：通用设置（主题）与关于信息。
 
-值保存在 ProjectSettings（随项目）与 QSettings（应用级默认，由 MainWindow
-持久化）；本页只负责展示与编辑，任何变更发 settingsChanged 信号。
+渲染相关的 Blender/输出目录/模板已上移到首页「渲染选项」卡。
 """
 
 from __future__ import annotations
 
-import os
-
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QComboBox,
-    QFileDialog,
     QFormLayout,
     QHBoxLayout,
+    QLabel,
     QVBoxLayout,
     QWidget,
 )
-from qfluentwidgets import (
-    BodyLabel,
-    LineEdit,
-    PushButton,
-    SubtitleLabel,
-)
+from qfluentwidgets import BodyLabel, CardWidget, SubtitleLabel
 
-from .. import blender_tools
-from ..naming import DEFAULT_FILE_TEMPLATE
+from .. import __version__
 
-_TEMPLATE_HINT = ("占位符：{file} {scene} {name} {index} {frame}；"
-                  "如 {file}/{scene}/{name} {index}，/ 表示子目录")
+THEME_LIGHT = "light"
+THEME_DARK = "dark"
+THEME_AUTO = "auto"
 
 
 class SettingsPage(QWidget):
-    settingsChanged = Signal()
+    themeChanged = Signal(str)  # "light" | "dark" | "auto"
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -40,123 +32,54 @@ class SettingsPage(QWidget):
 
     def _build_ui(self) -> None:
         root = QVBoxLayout(self)
+        root.setSpacing(10)
         root.addWidget(SubtitleLabel("设置"))
 
+        # ---- 外观
+        appearance = CardWidget(self)
+        av = QVBoxLayout(appearance)
+        av.addWidget(BodyLabel("外观"))
         form = QFormLayout()
-        form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
-
-        # Blender（QComboBox 可编辑：支持从探测列表选，也支持手输路径）
         row = QHBoxLayout()
-        self.cmbBlender = QComboBox()
-        self.cmbBlender.setEditable(True)
-        self.cmbBlender.setPlaceholderText("选择或输入 blender 可执行文件路径")
-        self.btnBrowseBlender = PushButton("浏览…")
-        self.btnRefreshBlender = PushButton("重新探测")
-        row.addWidget(self.cmbBlender, 1)
-        row.addWidget(self.btnBrowseBlender)
-        row.addWidget(self.btnRefreshBlender)
-        form.addRow("Blender", row)
-        self.lblVersion = BodyLabel("")
-        form.addRow("版本", self.lblVersion)
+        self.cmbTheme = QComboBox()
+        self.cmbTheme.addItem("浅色（默认）", THEME_LIGHT)
+        self.cmbTheme.addItem("深色", THEME_DARK)
+        self.cmbTheme.addItem("跟随系统", THEME_AUTO)
+        row.addWidget(self.cmbTheme)
+        row.addStretch(1)
+        form.addRow("主题", row)
+        av.addLayout(form)
+        root.addWidget(appearance)
 
-        # 输出目录
-        row2 = QHBoxLayout()
-        self.edOutdir = LineEdit()
-        self.edOutdir.setPlaceholderText("渲染输出目录（绝对路径）")
-        self.btnBrowseOut = PushButton("浏览…")
-        row2.addWidget(self.edOutdir, 1)
-        row2.addWidget(self.btnBrowseOut)
-        form.addRow("输出目录", row2)
-
-        # 模板
-        self.edTemplate = LineEdit()
-        form.addRow("文件模板", self.edTemplate)
-        tpl_row = QHBoxLayout()
-        hint = BodyLabel(_TEMPLATE_HINT)
-        hint.setWordWrap(True)
-        tpl_row.addWidget(hint, 1)
-        self.btnDefaultTemplate = PushButton("恢复默认")
-        tpl_row.addWidget(self.btnDefaultTemplate)
-        form.addRow("", tpl_row)
-
-        root.addLayout(form)
+        # ---- 关于
+        about = CardWidget(self)
+        bb = QVBoxLayout(about)
+        bb.addWidget(BodyLabel("关于"))
+        info = QLabel(
+            "Render Monitor Queue 渲染排队器\n"
+            f"版本：v{__version__}\n"
+            "许可：GPL-2.0-or-later\n"
+            "简介：把 Blender-Render-Monitor 插件建好的场景快照拖入排队，"
+            "在后台 blender -b 子进程中严格串行批量渲染，UI 不冻结。\n"
+            "渲染逻辑复用 vendor/render_monitor 插件包（同 GPL 许可，"
+            "源自 github.com/HarrisWilde/Blender-Render-Monitor）。\n"
+            "依赖：本机 Blender 4.2+；渲染设备/引擎跟随各快照保存的项目设置。")
+        info.setWordWrap(True)
+        info.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        info.setStyleSheet("color:#606060;font-size:12px;")
+        bb.addWidget(info)
+        root.addWidget(about)
         root.addStretch(1)
 
-        self.cmbBlender.currentTextChanged.connect(self._on_blender_text)
-        self.cmbBlender.currentIndexChanged.connect(self.settingsChanged)
-        self.btnBrowseBlender.clicked.connect(self._browse_blender)
-        self.btnRefreshBlender.clicked.connect(self._refresh)
-        self.btnBrowseOut.clicked.connect(self._browse_outdir)
-        self.btnDefaultTemplate.clicked.connect(self._reset_template)
-        self.edOutdir.textChanged.connect(self.settingsChanged)
-        self.edTemplate.textChanged.connect(self.settingsChanged)
-    # ---------------------------------------------------------- 数据访问
-    def blender_exe(self) -> str:
-        return self.cmbBlender.currentText().strip().strip('"')
+        self.cmbTheme.currentIndexChanged.connect(self._on_theme)
 
-    def outdir(self) -> str:
-        return self.edOutdir.text().strip()
+    def _on_theme(self, _index: int = 0) -> None:
+        self.themeChanged.emit(self.cmbTheme.currentData())
 
-    def template(self) -> str:
-        return self.edTemplate.text().strip() or DEFAULT_FILE_TEMPLATE
+    def set_theme(self, theme: str) -> None:
+        idx = self.cmbTheme.findData(theme)
+        if idx >= 0:
+            self.cmbTheme.setCurrentIndex(idx)
 
-    def set_values(self, blender_exe: str = "", outdir: str = "",
-                   template: str = "") -> None:
-        if template:
-            self.edTemplate.setText(template)
-        if outdir:
-            self.edOutdir.setText(outdir)
-        if blender_exe:
-            self.cmbBlender.setCurrentText(blender_exe)
-        self._on_blender_text(blender_exe or self.blender_exe())
-
-    # ------------------------------------------------------------ 内部
-    def _on_blender_text(self, text: str) -> None:
-        ver = blender_tools.parse_blender_version(
-            os.path.dirname(text) + os.sep + os.path.basename(text))
-        if ver and ver != (0, 0, 0):
-            self.lblVersion.setText(f"Blender {'.'.join(map(str, ver))}")
-        else:
-            self.lblVersion.setText("未识别（渲染时将以子进程方式运行）")
-        self.settingsChanged.emit()
-
-    def _browse_blender(self) -> None:
-        if os.name == "nt":
-            path, _ = QFileDialog.getOpenFileName(
-                self, "选择 blender.exe", r"C:\Program Files\Blender Foundation",
-                "Blender (blender.exe)")
-        else:
-            path, _ = QFileDialog.getOpenFileName(self, "选择 blender", "/", "Blender")
-        if path:
-            self.cmbBlender.setCurrentText(path)
-            self._on_blender_text(path)
-
-    def _browse_outdir(self) -> None:
-        path = QFileDialog.getExistingDirectory(
-            self, "选择输出目录", self.outdir() or os.path.expanduser("~"))
-        if path:
-            self.edOutdir.setText(path)
-
-    def _reset_template(self) -> None:
-        self.edTemplate.setText(DEFAULT_FILE_TEMPLATE)
-
-    def _refresh(self) -> None:
-        self.populate_blender(keep_current=True)
-
-    def populate_blender(self, keep_current: bool = True) -> None:
-        """用探测结果填充下拉（保留当前选择文本）。"""
-        current = self.blender_exe()
-        installs = blender_tools.blender_installs()
-        self.cmbBlender.blockSignals(True)
-        try:
-            self.cmbBlender.clear()
-            for inst in installs:
-                # 条目文本即 exe 路径本身（blender_exe() 直接读 currentText）
-                self.cmbBlender.addItem(inst.exe)
-            if current:
-                self.cmbBlender.setCurrentText(current)
-            elif installs:
-                self.cmbBlender.setCurrentIndex(0)
-        finally:
-            self.cmbBlender.blockSignals(False)
-        self._on_blender_text(self.blender_exe())
+    def current_theme(self) -> str:
+        return str(self.cmbTheme.currentData() or THEME_LIGHT)

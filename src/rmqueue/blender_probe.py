@@ -62,7 +62,13 @@ PROBE_SCRIPT = textwrap.dedent(
                 "output": s.output_path,
                 "error": getattr(s, "error", ""),
             })
-        scenes.append({"name": scene.name, "shots": shots})
+        out_dir = ""
+        try:
+            out_dir = scene.rm_output_dir or ""
+        except Exception:
+            pass
+        scenes.append({"name": scene.name, "shots": shots,
+                       "rm_output_dir": out_dir})
 
     payload = {
         "file": bpy.data.filepath,
