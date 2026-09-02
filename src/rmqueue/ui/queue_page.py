@@ -211,6 +211,11 @@ class QueuePage(QWidget):
                                    self._on_render_clicked)
         # 让按钮文字与图标并排显示（默认 IconOnly，需显式切换）
         self.cmdBar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        # CommandBar 手动按“当前宽度”排布；按钮在 IconOnly 状态下创建，
+        # 改样式后不会自动回写宽度（首按钮因此被压成纯图标宽）。
+        # 显式按文字样式 sizeHint 定宽，保证文字完整显示。
+        for _b in self.cmdBar.commandButtons:
+            _b.setFixedWidth(_b.sizeHint().width())
         root.addWidget(self.cmdBar)
 
         self.workerLabel = BodyLabel("")
