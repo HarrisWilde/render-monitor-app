@@ -26,7 +26,6 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QMenu,
     QMessageBox,
-    QProgressBar,
     QTreeWidgetItem,
     QVBoxLayout,
     QWidget,
@@ -34,7 +33,9 @@ from PySide6.QtWidgets import (
 from qfluentwidgets import (
     BodyLabel,
     CardWidget,
+    IndeterminateProgressBar,
     PrimaryPushButton,
+    ProgressBar,
     PushButton,
     SubtitleLabel,
     TreeWidget,
@@ -90,6 +91,44 @@ class _DropHint(QLabel):
         self.raise_()
 
 
+class _ShotProgressCell(QWidget):
+    """行内快照进度：Fluent 进度条（主题色）+ 固定宽度百分比文本。"""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(2, 0, 6, 0)
+        lay.setSpacing(4)
+        self.bar = ProgressBar(self)
+        self.bar.setFixedHeight(8)
+        self.bar.setUseAni(False)  # 跟随 0.5s tick 直刷，不做 150ms 动画
+        self.bar.setFixedWidth(96)
+        self.label = QLabel("0%")
+        self.label.setAlignment(Qt.AlignmentFlag.AlignRight
+                                | Qt.AlignmentFlag.AlignVCenter)
+        fm = self.label.fontMetrics()
+        self.label.setFixedWidth(fm.horizontalAdvance("100%") + 4)
+        self.label.setStyleSheet("color:#808080;font-size:11px;")
+        lay.addWidget(self.bar)
+        lay.addWidget(self.label)
+        self.setFixedWidth(160)
+        self.set_fraction(0.0, "PENDING")
+
+    def set_fraction(self, fraction: float, status: str = "RENDERING") -> None:
+        frac = max(0.0, min(float(fraction), 1.0))
+        self.bar.setVal(frac)
+        # 完成=绿色、失败=错误色、其它=主题色（accent）
+        if status == "DONE":
+            self.bar.setCustomBarColor(QColor("#0f7b0f"), QColor("#6ccb5f"))
+            self.bar.setError(False)
+        elif status == "FAILED":
+            self.bar.setError(True)
+        else:
+            self.bar.setCustomBarColor(QColor(), QColor())  # 复位为主题色
+            self.bar.setError(False)
+        self.label.setText(f"{int(round(frac * 100))}%")
+
+
 class QueuePage(QWidget):
     filesAdded = Signal(list)
     renderRequested = Signal()
@@ -127,14 +166,19 @@ class QueuePage(QWidget):
         self.lblPercent.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         fm = self.lblPercent.fontMetrics()
         self.lblPercent.setFixedWidth(fm.horizontalAdvance("100.0%") + 6)
-        self.progressOverall = QProgressBar()
-        self.progressOverall.setRange(0, 1000)
-        self.progressOverall.setValue(0)
+        # 整体进度：Fluent 细条（主题色）+ 忙碌（Indeterminate）双形态
+        self.progressOverall = ProgressBar()
+        self.progressOverall.setFixedHeight(10)
         self.progressOverall.setFixedWidth(240)
-        self.progressOverall.setTextVisible(False)
+        self.progressOverall.setUseAni(False)
+        self.progressBusy = IndeterminateProgressBar()
+        self.progressBusy.setFixedHeight(10)
+        self.progressBusy.setFixedWidth(240)
         head.addWidget(self.progressOverall)
+        head.addWidget(self.progressBusy)
         head.addWidget(self.lblPercent)
         self.progressOverall.hide()
+        self.progressBusy.hide()
         self.lblPercent.hide()
         root.addLayout(head)
 
@@ -379,16 +423,12 @@ class QueuePage(QWidget):
                                                _STATUS_COLORS["PENDING"])))
                         sh_item.setToolTip(3, shot.output or shot.error or "")
                         sc_item.addChild(sh_item)
-                        bar = QProgressBar()
-                        bar.setRange(0, 1000)
-                        # 完成态直接满格；百分比文字恒定在条内（固定宽度，无抖动）
-                        bar.setValue(1000 if shot.app_status == "DONE" else 0)
-                        bar.setTextVisible(True)
-                        bar.setFormat("%p%")
-                        bar.setFixedWidth(150)
-                        self.tree.setItemWidget(sh_item, 2, bar)
+                        cell = _ShotProgressCell()
+                        cell.set_fraction(1.0 if shot.app_status == "DONE" else 0.0,
+                                          shot.app_status)
+                        self.tree.setItemWidget(sh_item, 2, cell)
                         key = (_norm(f.path), scene.name, shot.uid)
-                        self._rows[key] = (sh_item, bar)
+                        self._rows[key] = (sh_item, cell)
                     sc_item.setExpanded(True)
                 file_item.setExpanded(True)
             total = q.total_shots()
@@ -552,29 +592,26 @@ class QueuePage(QWidget):
             self.overall_mode("hidden")
 
     def overall_mode(self, mode: str) -> None:
-        """mode: hidden（无任务）| busy（忙碌动画，不显示数值）| normal（数值进度）"""
+        """mode: hidden（无任务）| busy（忙碌动画）| normal（数值进度）"""
         if mode == "hidden":
             self.progressOverall.hide()
+            self.progressBusy.hide()
             self.lblPercent.hide()
         elif mode == "busy":
-            self.progressOverall.show()
-            self.progressOverall.setRange(0, 0)  # 忙碌动画（不定量）
+            self.progressOverall.hide()
+            self.progressBusy.show()
             self.lblPercent.hide()
         else:  # normal
             self.progressOverall.show()
-            self.progressOverall.setRange(0, 1000)
+            self.progressBusy.hide()
             self.lblPercent.show()
 
     def set_overall(self, value, total: int) -> None:
-        """总进度：value=已完成权重（含当前张部分进度，可为浮点），total=批次总数。
-
-        百分比取一位小数并填充到固定宽度，杜绝数字位长变化引起的抖动。
-        """
+        """总进度：value=已完成权重（含当前张部分进度，可为浮点），total=批次总数。"""
         if not total or total <= 0:
             return
         frac = max(0.0, min(float(value) / total, 1.0))
-        self.progressOverall.setRange(0, 1000)
-        self.progressOverall.setValue(int(frac * 1000))
+        self.progressOverall.setVal(frac)
         self.lblPercent.setText(f"{frac * 100:.1f}%")
 
     def set_worker_text(self, text: str) -> None:
@@ -591,7 +628,7 @@ class QueuePage(QWidget):
             row = self._rows.get(key)
             if row is None:
                 continue
-            item, bar = row
+            item, cell = row
             status = j.get("status", "PENDING")
             # 状态列只显示稳定文字（采样/块细节放左下角状态行 + 悬停提示）
             item.setText(1, status_text(status))
@@ -608,10 +645,8 @@ class QueuePage(QWidget):
             elif status == "DONE" and j.get("path"):
                 item.setText(3, j.get("path"))
                 item.setToolTip(3, j.get("path"))
-            progress = float(j.get("progress") or 0.0)
-            bar.setValue(int(max(0.0, min(progress, 1.0)) * 1000))
-            if status == "DONE":
-                bar.setValue(1000)
+            frac = 1.0 if status == "DONE" else float(j.get("progress") or 0.0)
+            cell.set_fraction(frac, status)
 
     # ============================================================ 配置
     def _update_resolved_hint(self) -> None:
