@@ -18,6 +18,7 @@ from PySide6.QtCore import QTimer, Qt, Signal
 from PySide6.QtGui import QBrush, QColor, QGuiApplication
 from PySide6.QtWidgets import (
     QFileDialog,
+    QFrame,
     QHBoxLayout,
     QHeaderView,
     QLabel,
@@ -26,16 +27,13 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 from qfluentwidgets import (
-    Action,
     BodyLabel,
     CardWidget,
     ComboBox,
-    CommandBar,
     FluentIcon,
     IndeterminateProgressBar,
     LineEdit,
     MessageBox,
-    PrimaryPushButton,
     ProgressBar,
     PushButton,
     RoundMenu,
@@ -186,27 +184,41 @@ class QueuePage(QWidget):
         self.lblPercent.hide()
         root.addLayout(head)
 
-        # ---- 顶部操作：CommandBar（Fluent 内置图标 + 文字）
-        self.cmdBar = CommandBar(self)
+        # ---- 顶部操作条：图标+文字的 Fluent PushButton，分组间原生竖线分隔
+        bar = CardWidget(self)
+        bl = QHBoxLayout(bar)
+        bl.setSpacing(2)
+        bl.setContentsMargins(8, 4, 8, 4)
 
-        def _add_cmd(icon, text: str, key: str, slot) -> None:
-            act = Action(icon, text, self)
-            act.triggered.connect(slot)
-            self._action_buttons[key] = act
-            self.cmdBar.addAction(act)
+        def _btn(icon, text: str, key: str, slot) -> None:
+            b = PushButton(text, bar)
+            b.setIcon(icon)
+            b.clicked.connect(slot)
+            self._action_buttons[key] = b
+            bl.addWidget(b)
 
-        _add_cmd(FluentIcon.FOLDER, "打开项目", "open", self.openProjectRequested)
-        _add_cmd(FluentIcon.SAVE, "保存项目", "save", self._on_save)
-        _add_cmd(FluentIcon.FOLDER_ADD, "添加文件", "add", self._on_add_files)
-        _add_cmd(FluentIcon.DELETE, "移除", "remove", self._on_remove_file)
-        _add_cmd(FluentIcon.UP, "上移", "up", lambda: self._move_file(-1))
-        _add_cmd(FluentIcon.DOWN, "下移", "down", lambda: self._move_file(1))
-        _add_cmd(FluentIcon.CHECKBOX, "全选", "all", lambda: self._set_all_selected(True))
-        _add_cmd(FluentIcon.CLOSE, "全不选", "none", lambda: self._set_all_selected(False))
-        _add_cmd(FluentIcon.PLAY, "开始渲染", "render", self.renderRequested)
-        _add_cmd(FluentIcon.CANCEL, "停止渲染", "stop", self.cancelRequested)
-        self._action_buttons["stop"].setVisible(False)
-        root.addWidget(self.cmdBar)
+        def _sep() -> None:
+            line = QFrame(bar)
+            line.setFrameShape(QFrame.Shape.VLine)
+            line.setFixedHeight(20)
+            line.setStyleSheet("color:#c0c0c0;")
+            bl.addWidget(line)
+
+        _btn(FluentIcon.FOLDER, "打开项目", "open", self.openProjectRequested)
+        _btn(FluentIcon.SAVE, "保存项目", "save", self._on_save)
+        _sep()
+        _btn(FluentIcon.FOLDER_ADD, "添加文件", "add", self._on_add_files)
+        _btn(FluentIcon.DELETE, "移除", "remove", self._on_remove_file)
+        _btn(FluentIcon.UP, "上移", "up", lambda: self._move_file(-1))
+        _btn(FluentIcon.DOWN, "下移", "down", lambda: self._move_file(1))
+        _sep()
+        _btn(FluentIcon.CHECKBOX, "全选", "all", lambda: self._set_all_selected(True))
+        _btn(FluentIcon.CLOSE, "全不选", "none", lambda: self._set_all_selected(False))
+        bl.addStretch(1)
+        _btn(FluentIcon.PLAY, "开始渲染", "render", self.renderRequested)
+        _btn(FluentIcon.CANCEL, "停止渲染", "stop", self.cancelRequested)
+        self._action_buttons["stop"].hide()
+        root.addWidget(bar)
 
         self.workerLabel = BodyLabel("")
         root.addWidget(self.workerLabel)
