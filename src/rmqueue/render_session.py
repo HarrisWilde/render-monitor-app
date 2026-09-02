@@ -204,6 +204,13 @@ RENDER_SCRIPT = textwrap.dedent(
 )
 
 
+def _no_window_kwargs() -> dict:
+    """Windows 下禁止子进程创建控制台窗口（blender.exe 是控制台程序）。"""
+    if sys.platform == "win32":
+        return {"creationflags": subprocess.CREATE_NO_WINDOW}
+    return {}
+
+
 def app_src_dir() -> str:
     """返回可被子进程 import 的 rmqueue 源码父目录（src / 打包根）。"""
     if getattr(sys, "frozen", False):
@@ -249,7 +256,7 @@ def spawn_session(
         "1" if use_snapshot_frame else "0",
         progress_path, jobs_json_path,
     ]
-    proc = subprocess.Popen(cmd, stdout=log_f, stderr=log_f)
+    proc = subprocess.Popen(cmd, stdout=log_f, stderr=log_f, **_no_window_kwargs())
     log_f.close()
     return {
         "process": proc,

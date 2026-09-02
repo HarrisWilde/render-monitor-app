@@ -121,9 +121,12 @@ def build_fixture(blender_exe: str, out_blend: str, vendor_dir: str,
         script_path = f.name
     try:
         cmd = [blender_exe, "-b", "-P", script_path, "--", vendor_dir, out_blend]
+        kwargs = {}
+        if sys.platform == "win32":
+            kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
         return subprocess.run(
             cmd, capture_output=True, text=True,
-            encoding="utf-8", errors="replace", timeout=timeout,
+            encoding="utf-8", errors="replace", timeout=timeout, **kwargs,
         )
     finally:
         try:

@@ -84,6 +84,13 @@ PROBE_SCRIPT = textwrap.dedent(
 )
 
 
+def _no_window_kwargs() -> dict:
+    """Windows 下禁止子进程创建控制台窗口（blender.exe 是控制台程序）。"""
+    if sys.platform == "win32":
+        return {"creationflags": subprocess.CREATE_NO_WINDOW}
+    return {}
+
+
 def run_blender_script(
     blender_exe: str,
     blend_file: str,
@@ -106,6 +113,7 @@ def run_blender_script(
             encoding="utf-8",
             errors="replace",
             timeout=timeout,
+            **_no_window_kwargs(),
         )
     finally:
         if script_path:
