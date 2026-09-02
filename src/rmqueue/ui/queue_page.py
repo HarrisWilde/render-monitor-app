@@ -14,23 +14,24 @@ import os
 import subprocess
 import sys
 
-from PySide6.QtCore import QPoint, QTimer, Qt, Signal
+from PySide6.QtCore import QTimer, Qt, Signal
 from PySide6.QtGui import QBrush, QColor, QGuiApplication
 from PySide6.QtWidgets import (
     QFileDialog,
-    QFrame,
     QHBoxLayout,
     QHeaderView,
     QLabel,
-    QToolTip,
     QTreeWidgetItem,
     QVBoxLayout,
     QWidget,
 )
 from qfluentwidgets import (
+    Action,
     BodyLabel,
     CardWidget,
     ComboBox,
+    CommandBar,
+    FluentIcon,
     IndeterminateProgressBar,
     LineEdit,
     MessageBox,
@@ -39,6 +40,7 @@ from qfluentwidgets import (
     PushButton,
     RoundMenu,
     SubtitleLabel,
+    TeachingTip,
     TreeWidget,
 )
 
@@ -184,21 +186,27 @@ class QueuePage(QWidget):
         self.lblPercent.hide()
         root.addLayout(head)
 
-        # ---- 队列操作卡片（分组）
-        actions = CardWidget(self)
-        acts = QHBoxLayout(actions)
-        acts.setSpacing(6)
-        self._add_group(acts, "项目", [("打开项目", "open"), ("保存项目", "save")])
-        self._add_group(acts, "文件", [("添加文件", "add"), ("移除", "remove"),
-                                       ("上移", "up"), ("下移", "down")])
-        self._add_group(acts, "勾选", [("全选", "all"), ("全不选", "none")])
-        acts.addStretch(1)
-        self.btnRender = PrimaryPushButton("开始渲染")
-        self.btnStop = PushButton("停止渲染")
-        self.btnStop.hide()
-        acts.addWidget(self.btnRender)
-        acts.addWidget(self.btnStop)
-        root.addWidget(actions)
+        # ---- 顶部操作：CommandBar（Fluent 内置图标 + 文字）
+        self.cmdBar = CommandBar(self)
+
+        def _add_cmd(icon, text: str, key: str, slot) -> None:
+            act = Action(icon, text, self)
+            act.triggered.connect(slot)
+            self._action_buttons[key] = act
+            self.cmdBar.addAction(act)
+
+        _add_cmd(FluentIcon.FOLDER, "打开项目", "open", self.openProjectRequested)
+        _add_cmd(FluentIcon.SAVE, "保存项目", "save", self._on_save)
+        _add_cmd(FluentIcon.FOLDER_ADD, "添加文件", "add", self._on_add_files)
+        _add_cmd(FluentIcon.DELETE, "移除", "remove", self._on_remove_file)
+        _add_cmd(FluentIcon.UP, "上移", "up", lambda: self._move_file(-1))
+        _add_cmd(FluentIcon.DOWN, "下移", "down", lambda: self._move_file(1))
+        _add_cmd(FluentIcon.CHECKBOX, "全选", "all", lambda: self._set_all_selected(True))
+        _add_cmd(FluentIcon.CLOSE, "全不选", "none", lambda: self._set_all_selected(False))
+        _add_cmd(FluentIcon.PLAY, "开始渲染", "render", self.renderRequested)
+        _add_cmd(FluentIcon.CANCEL, "停止渲染", "stop", self.cancelRequested)
+        self._action_buttons["stop"].setVisible(False)
+        root.addWidget(self.cmdBar)
 
         self.workerLabel = BodyLabel("")
         root.addWidget(self.workerLabel)
@@ -274,16 +282,6 @@ class QueuePage(QWidget):
         self._dropHint = _DropHint(self)
 
         # ---- 信号
-        self.btnRender.clicked.connect(self.renderRequested)
-        self.btnStop.clicked.connect(self.cancelRequested)
-        self._wire_action("open", self.openProjectRequested)
-        self._wire_action("save", self._on_save)
-        self._wire_action("add", self._on_add_files)
-        self._wire_action("remove", self._on_remove_file)
-        self._wire_action("up", lambda: self._move_file(-1))
-        self._wire_action("down", lambda: self._move_file(1))
-        self._wire_action("all", lambda: self._set_all_selected(True))
-        self._wire_action("none", lambda: self._set_all_selected(False))
         self.tree.itemChanged.connect(self._on_item_changed)
         self.tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.tree.customContextMenuRequested.connect(self._on_context_menu)
@@ -296,24 +294,6 @@ class QueuePage(QWidget):
         self.btnBrowseOut.clicked.connect(self._browse_outdir)
         self.btnDefaultTemplate.clicked.connect(
             lambda: self.edTemplate.setText(DEFAULT_FILE_TEMPLATE))
-
-    def _add_group(self, layout: QHBoxLayout, title: str,
-                   items: list[tuple[str, str]]) -> None:
-        lbl = QLabel(title)
-        lbl.setStyleSheet("color:#808080;font-size:11px;")
-        layout.addWidget(lbl)
-        for text, key in items:
-            btn = PushButton(text)
-            setattr(self, f"btn_{key}", btn)
-            layout.addWidget(btn)
-        line = QFrame()
-        line.setFrameShape(QFrame.Shape.VLine)
-        line.setStyleSheet("color:#c0c0c0;")
-        layout.addWidget(line)
-
-    def _wire_action(self, key: str, slot) -> None:
-        getattr(self, f"btn_{key}").clicked.connect(slot)
-        self._action_buttons[key] = getattr(self, f"btn_{key}")
 
     def _on_save(self) -> None:
         if self._queue and self._queue.files:
@@ -590,8 +570,9 @@ class QueuePage(QWidget):
         for key in ("open", "save", "add", "remove", "up", "down",
                     "all", "none"):
             self._action_buttons[key].setEnabled(not busy)
-        self.btnRender.setVisible(not busy)
-        self.btnStop.setVisible(busy)
+        self._action_buttons["render"].setVisible(not busy)
+        self._action_buttons["stop"].setVisible(busy)
+        self._action_buttons["stop"].setEnabled(busy)
         for w in (self.cmbBlender, self.cmbSource, self.edOutdir,
                   self.edTemplate, self.btnBrowseBlender,
                   self.btnBrowseOut, self.btnDefaultTemplate,
@@ -663,19 +644,20 @@ class QueuePage(QWidget):
 
     # ============================================================ 配置
     def _show_template_tips(self) -> None:
-        """命名模板占位符说明：系统富文本 Tooltip（非自绘）。"""
-        html = (
-            "<div style='white-space:nowrap;'>"
-            "<b>命名模板占位符</b><hr>"
-            "<b>{file}</b>　当前 .blend 文件名（去扩展名）<br>"
-            "<b>{scene}</b>　场景名<br>"
-            "<b>{name}</b>　快照名<br>"
-            "<b>{index}</b>　队列序号，从 1 起（可带格式，如 {index:02d}→07）<br>"
-            "<b>{frame}</b>　渲染帧号（可带格式，如 {frame:04d}→0007）<br><hr>"
-            "/ 会生成子文件夹；模板不含占位符时自动回退默认模板。</div>")
-        pos = self.btnTemplateHelp.mapToGlobal(
-            QPoint(0, self.btnTemplateHelp.height() + 8))
-        QToolTip.showText(pos, html, self.btnTemplateHelp, msecShowTime=15000)
+        """命名模板占位符说明：Fluent TeachingTip（自带箭头/关闭/主题）。"""
+        content = "\n".join([
+            "{file}　当前 .blend 文件名（去扩展名）",
+            "{scene}　场景名",
+            "{name}　快照名",
+            "{index}　队列序号，从 1 起（可带格式，如 {index:02d}→07）",
+            "{frame}　渲染帧号（可带格式，如 {frame:04d}→0007）",
+            "",
+            "/ 会生成子文件夹；模板不含任何占位符时自动回退默认模板。",
+        ])
+        TeachingTip.create(
+            target=self.btnTemplateHelp, title="命名模板占位符",
+            content=content, icon=FluentIcon.INFO,
+            isClosable=True, duration=20000)
 
     def _on_config_changed(self) -> None:
         self.configChanged.emit()

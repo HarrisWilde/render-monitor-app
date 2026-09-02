@@ -73,16 +73,16 @@ def main() -> int:
     assert q.shot_by(r"C:\demo\scene.blend", "Scene B", "u4").selected is False
     print("step: scene uncheck ok", flush=True)
 
-    # 全选/全不选按钮
-    win.page.btn_all.click()
+    # 全选/全不选（CommandBar Action）
+    win.page._action_buttons["all"].trigger()
     app.processEvents()
     assert len(q.flatten_selected()) == 4
     print("step: btn_all ok", flush=True)
-    win.page.btn_none.click()
+    win.page._action_buttons["none"].trigger()
     app.processEvents()
     assert len(q.flatten_selected()) == 0
     print("step: btn_none ok", flush=True)
-    win.page.btn_all.click()
+    win.page._action_buttons["all"].trigger()
     app.processEvents()
     print("step: btn_all2 ok", flush=True)
 
