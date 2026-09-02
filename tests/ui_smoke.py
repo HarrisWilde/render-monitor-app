@@ -97,14 +97,10 @@ def main() -> int:
     assert win._render is None  # 校验失败不应启动
     print("step: start_render guard ok", flush=True)
 
-    # “?”模板帮助浮窗
+    # “?”模板帮助（富文本 Tooltip，仅验证不崩溃）
     win.page.btnTemplateHelp.click()
     app.processEvents()
-    pop = win.page._template_pop
-    assert pop is not None and pop.isVisible()
-    pop.close()
-    app.processEvents()
-    print("step: help popover ok", flush=True)
+    print("step: template help ok", flush=True)
 
     # 关闭（若有 worker 残留则先取消等待）
     if win._render is not None:

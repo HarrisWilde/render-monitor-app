@@ -14,7 +14,7 @@ import os
 import subprocess
 import sys
 
-from PySide6.QtCore import QTimer, Qt, Signal
+from PySide6.QtCore import QPoint, QTimer, Qt, Signal
 from PySide6.QtGui import QBrush, QColor, QGuiApplication
 from PySide6.QtWidgets import (
     QFileDialog,
@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QHeaderView,
     QLabel,
+    QToolTip,
     QTreeWidgetItem,
     QVBoxLayout,
     QWidget,
@@ -44,7 +45,6 @@ from qfluentwidgets import (
 from .. import blender_tools
 from ..naming import DEFAULT_FILE_TEMPLATE
 from ..queue import Queue
-from .widgets import PlaceholderHelpPopover, RichComboBox
 from .workers import status_text
 
 ROLE_TOKEN = Qt.ItemDataRole.UserRole
@@ -218,11 +218,18 @@ class QueuePage(QWidget):
         ov = QVBoxLayout(opts)
         ov.setSpacing(8)
 
-        # Blender：富下拉，选项内含「简短名 + 灰字全路径」（路径不再外置显示）
+        # Blender：标准 Fluent ComboBox（简短名），完整路径显示在右侧灰字
         row1 = QHBoxLayout()
         row1.addWidget(BodyLabel("Blender"))
-        self.cmbBlender = RichComboBox()
-        row1.addWidget(self.cmbBlender, 1)
+        self.cmbBlender = ComboBox()
+        self.cmbBlender.setMinimumWidth(200)
+        row1.addWidget(self.cmbBlender)
+        self.lblBlenderPath = QLabel("")
+        self.lblBlenderPath.setStyleSheet("color:#808080;font-size:11px;")
+        self.lblBlenderPath.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.lblBlenderPath.setMinimumWidth(60)
+        row1.addWidget(self.lblBlenderPath, 1)
         self.btnBrowseBlender = PushButton("浏览…")
         self.btnRescanBlender = PushButton("重新探测")
         row1.addWidget(self.btnBrowseBlender)
@@ -244,7 +251,7 @@ class QueuePage(QWidget):
         row2.addWidget(self.btnBrowseOut)
         ov.addLayout(row2)
 
-        # 命名模板 + “?”帮助浮窗
+        # 命名模板 + “?”（富文本 Tooltip 说明，非自绘）
         row3 = QHBoxLayout()
         row3.addWidget(BodyLabel("命名模板"))
         self.edTemplate = LineEdit()
@@ -253,12 +260,11 @@ class QueuePage(QWidget):
         self.btnTemplateHelp = PushButton("?")
         self.btnTemplateHelp.setFixedSize(30, 30)
         self.btnTemplateHelp.setToolTip("占位符说明")
-        self.btnTemplateHelp.clicked.connect(self._toggle_template_help)
+        self.btnTemplateHelp.clicked.connect(self._show_template_tips)
         row3.addWidget(self.btnTemplateHelp)
         self.btnDefaultTemplate = PushButton("恢复默认")
         row3.addWidget(self.btnDefaultTemplate)
         ov.addLayout(row3)
-        self._template_pop = None
         root.addWidget(opts)
 
         # ---- 状态行
@@ -348,6 +354,9 @@ class QueuePage(QWidget):
         return str(self.cmbBlender.currentData() or "")
 
     def _on_blender_changed(self) -> None:
+        exe = self.blender_exe()
+        self.lblBlenderPath.setText(exe)
+        self.lblBlenderPath.setToolTip(exe)
         self._on_config_changed()
 
     def _browse_blender(self) -> None:
@@ -653,12 +662,20 @@ class QueuePage(QWidget):
             cell.set_fraction(frac, status)
 
     # ============================================================ 配置
-    def _toggle_template_help(self) -> None:
-        if self._template_pop is not None:
-            self._template_pop.close()
-        pop = PlaceholderHelpPopover(self.window())
-        self._template_pop = pop
-        pop.show_below(self.btnTemplateHelp)
+    def _show_template_tips(self) -> None:
+        """命名模板占位符说明：系统富文本 Tooltip（非自绘）。"""
+        html = (
+            "<div style='white-space:nowrap;'>"
+            "<b>命名模板占位符</b><hr>"
+            "<b>{file}</b>　当前 .blend 文件名（去扩展名）<br>"
+            "<b>{scene}</b>　场景名<br>"
+            "<b>{name}</b>　快照名<br>"
+            "<b>{index}</b>　队列序号，从 1 起（可带格式，如 {index:02d}→07）<br>"
+            "<b>{frame}</b>　渲染帧号（可带格式，如 {frame:04d}→0007）<br><hr>"
+            "/ 会生成子文件夹；模板不含占位符时自动回退默认模板。</div>")
+        pos = self.btnTemplateHelp.mapToGlobal(
+            QPoint(0, self.btnTemplateHelp.height() + 8))
+        QToolTip.showText(pos, html, self.btnTemplateHelp, msecShowTime=15000)
 
     def _on_config_changed(self) -> None:
         self.configChanged.emit()
