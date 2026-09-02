@@ -116,7 +116,8 @@ class _ShotProgressCell(QWidget):
 
     def set_fraction(self, fraction: float, status: str = "RENDERING") -> None:
         frac = max(0.0, min(float(fraction), 1.0))
-        self.bar.setVal(frac)
+        # Fluent 条按 val/(max-min) 画宽，默认区间 0..100 → 传 0..100 刻度
+        self.bar.setVal(frac * 100)
         # 完成=绿色、失败=错误色、其它=主题色（accent）
         if status == "DONE":
             self.bar.setCustomBarColor(QColor("#0f7b0f"), QColor("#6ccb5f"))
@@ -611,7 +612,8 @@ class QueuePage(QWidget):
         if not total or total <= 0:
             return
         frac = max(0.0, min(float(value) / total, 1.0))
-        self.progressOverall.setVal(frac)
+        # Fluent 条默认区间 0..100
+        self.progressOverall.setVal(frac * 100)
         self.lblPercent.setText(f"{frac * 100:.1f}%")
 
     def set_worker_text(self, text: str) -> None:
