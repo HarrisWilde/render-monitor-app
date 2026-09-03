@@ -13,7 +13,7 @@
     [LICENSE](LICENSE)）；应用自身代码同样采用 GPL-2.0-or-later。
 - 前置依赖：本机安装 Blender 4.2+（应用启动时会自动探测，也可在「设置」中手动指定）
 
-## 功能（v0.1 已实现）
+## 功能（v0.2.0 已实现）
 
 - **拖入排队**：拖拽（或「添加文件」）一个或多个 `.blend` → 后台起 `blender -b` 探针，
   只读枚举文件内每个场景用插件建好的快照（UID/名称/插件状态），不修改文件；
@@ -27,14 +27,34 @@
 - **停止/崩溃一致**：停止 → 当前张复位「待渲染」；进程崩溃/致命错误 → 按插件语义精确标记
   （渲染中→失败，早退→整批失败），不误报；
 - **项目持久化**：队列（文件顺序/勾选/各快照结果/输出设置）保存为 `.rmq.json`，随时打开续跑；
-- **失败重试**：失败项保持勾选与错误信息，修正后再次「开始渲染」即可（应用不预删任何旧输出）。
+- **失败重试**：失败项保持勾选与错误信息，修正后再次「开始渲染」即可（应用不预删任何旧输出）；
+- **自动更新检查**：设置页可开关；应用启动后自动请求 GitHub Releases 检测新版本，发现新版会提示并可在设置页「前往下载」；支持手动「立即检查」。
+
+## 版本历史
+
+### v0.2.0
+
+- 新增自动更新：设置页增加「更新」卡片，支持启动时自动检查与手动检查；
+- 检测到新 Release 后可在设置页一键前往下载安装包；
+- 重构/新增 `updater.py`、`UpdateCheckWorker`，后台检查不阻塞 UI。
+
+### v0.1.1
+
+- 修复 qfluentwidgets `ProgressBar` 残留动画会把已完成进度条异步拉回 0 的问题；
+- 快照行内/顶部整体进度条高度调整为默认 4px；
+- 同步更新主界面截图。
+
+### v0.1.0
+
+- 首个可用版本：拖入 .blend 枚举快照、三层队列、勾选批量渲染、实时进度、
+  项目持久化、失败重试、PyInstaller/Inno Setup 打包。
 
 ## 截图/界面
 
 ![Render Monitor Queue 主界面](docs/screenshots/screenshot.png)
 
-启动后左侧导航：「队列」（渲染队列主页）与「设置」（Blender 路径/输出目录/命名模板）。
-界面为 Fluent 风格；支持浅色/深色主题（跟随系统或手动切换）。
+启动后左侧导航：「队列」（渲染队列主页，含 Blender/输出目录/命名模板）与「设置」
+（主题、自动更新、关于）。界面为 Fluent 风格；支持浅色/深色主题（跟随系统或手动切换）。
 
 ## 快速开始（开发）
 
@@ -48,7 +68,7 @@ python -m venv .venv
 #    或安装后的入口： rmqueue
 
 # 3) 测试
-.\.venv\Scripts\python -m pytest -q          # 纯逻辑单测（44 个）
+.\.venv\Scripts\python -m pytest -q          # 纯逻辑 + UI 回归单测（62 个）
 .\.venv\Scripts\python tests\ui_smoke.py     # UI offscreen smoke
 .\.venv\Scripts\python tests\smoke_probe.py --all     # 真实 Blender 枚举 E2E
 .\.venv\Scripts\python tests\render_e2e.py --all      # 真实 Blender 渲染 E2E
@@ -68,11 +88,12 @@ src/rmqueue/
 ├── queue.py             # 队列模型 + 项目 JSON + 探针合并（纯逻辑）
 ├── progress.py          # mmap 进度协议（应用/子进程双端共用）
 ├── render_session.py    # 渲染子进程编排 + 会话收尾状态修正
+├── updater.py           # GitHub Release 自动更新检查（纯逻辑）
 └── ui/
-    ├── main_window.py   # Fluent 主窗（控制器：探针/渲染调度/项目 IO）
+    ├── main_window.py   # Fluent 主窗（控制器：探针/渲染调度/更新检查/项目 IO）
     ├── queue_page.py    # 队列页（拖放/三层树/勾选/排序/进度）
-    ├── settings_page.py # 设置页
-    └── workers.py       # QThread：ProbeWorker / RenderWorker
+    ├── settings_page.py # 设置页（主题/自动更新/关于）
+    └── workers.py       # QThread：ProbeWorker / RenderWorker / UpdateCheckWorker
 vendor/render_monitor/   # 复制的 GPL 插件包（子进程注入复用）
 tests/                   # unittest/pytest + fixture/E2E/smoke 脚本
 AGENTS.md                # 给 Agent 的仓库须知（上游同步为第一要项）
@@ -96,21 +117,30 @@ docs/upstream-sync.md    # 上游同步流程与当前漂移状态
 - **进度交换 = 文件-backed mmap**：长度前缀 + JSON payload，单写单读无锁；协议唯一实现
   （`progress.py`）同时被注入脚本 import，杜绝两端漂移；
 - **数据只读**：应用从不写回 .blend；快照以 UID 定位，源文件只作为渲染输入；
-- **可测性**：模型/命名/协议/收尾状态机均为纯 Python（44 个单测），真实 Blender 流程由
-  fixture + E2E 覆盖（已在 Blender 5.0.0 与 4.5.3 LTS 上通过）。
+- **可测性**：模型/命名/协议/收尾状态机/更新检查均为纯 Python（pytest 62 个），真实
+  Blender 流程由 fixture + E2E 覆盖（已在 Blender 5.0.0 与 4.5.3 LTS 上通过）。
 
-## 打包（PyInstaller）
+## 打包（PyInstaller + Inno Setup）
 
 ```powershell
+# 1) 先构建 onedir 应用
 .\.venv\Scripts\python -m pip install pyinstaller
 .\.venv\Scripts\python -m PyInstaller packaging\rmqueue.spec --noconfirm
+
+# 2) 再用 Inno Setup 生成安装包
+#    需要本机安装 Inno Setup 6，并把 ISCC.exe 所在目录加入 PATH
+ISCC.exe packaging\installer.iss
 ```
 
-产物在 `dist\RenderMonitorQueue\`（onedir 形态，含 `vendor\render_monitor` 与 `rmqueue` 包；
-`find_vendor_dir()`/`app_src_dir()` 已兼容 `_MEIPASS`）。换平台打包需在该平台执行，并确认
-Blender 路径探测分支（mac/Linux 见 `blender_tools.py`）。
+产物：
 
-## 已知限制（v0.1）
+- `dist\RenderMonitorQueue\`：onedir 免安装形态（含 `vendor\render_monitor` 与 `rmqueue` 包；
+  `find_vendor_dir()`/`app_src_dir()` 已兼容 `_MEIPASS`）
+- `dist\installer\RenderMonitorQueue-Setup-<版本>.exe`：Windows 安装包
+
+换平台打包需在该平台执行，并确认 Blender 路径探测分支（mac/Linux 见 `blender_tools.py`）。
+
+## 已知限制
 
 - 快照需先在 Blender 中由 Render Monitor 插件创建（应用只读）；应用内不做捕获/写回；
 - 渲染输出以「应用设置」的输出目录与命名模板为准（不复用 .blend 内场景的 rm_output_dir）；
@@ -126,5 +156,7 @@ Blender 路径探测分支（mac/Linux 见 `blender_tools.py`）。
 - [x] `blender -b` 探针与渲染引擎（含 mmap 进度/原子替换/状态修正）
 - [x] 双 Blender 真实 E2E（枚举 + 渲染）
 - [x] Fluent UI（队列页/设置页/worker 集成）
+- [x] 自动更新检查（GitHub Release）
+- [x] PyInstaller / Inno Setup Windows 安装包
 - [ ] 端到端 GUI 手工验证 / 崩溃-恢复续跑打磨
-- [ ] PyInstaller 正式打包验证 / macOS、Linux 支持
+- [ ] macOS、Linux 支持
