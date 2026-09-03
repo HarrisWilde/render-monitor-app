@@ -2,7 +2,7 @@
 ; Build after PyInstaller: dist\RenderMonitorQueue\RenderMonitorQueue.exe
 
 #ifndef MyAppVersion
-  #define MyAppVersion "0.1.0"
+  #define MyAppVersion "0.1.1"
 #endif
 
 #define MyAppName "Render Monitor Queue"

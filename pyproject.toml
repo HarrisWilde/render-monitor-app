@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "render-monitor-queue"
-version = "0.1.0"
+version = "0.1.1"
 description = "独立批量渲染排队应用：拖入 .blend，枚举场景快照，串行后台渲染（Render Monitor 生态）"
 readme = "README.md"
 requires-python = ">=3.10"
