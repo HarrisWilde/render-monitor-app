@@ -73,7 +73,19 @@ src/rmqueue/
     └── workers.py       # QThread：ProbeWorker / RenderWorker
 vendor/render_monitor/   # 复制的 GPL 插件包（子进程注入复用）
 tests/                   # unittest/pytest + fixture/E2E/smoke 脚本
+AGENTS.md                # 给 Agent 的仓库须知（上游同步为第一要项）
+docs/upstream-sync.md    # 上游同步流程与当前漂移状态
 ```
+
+## 上游同步（重要）
+
+本项目的 `vendor/render_monitor/` 来自上游 Blender 插件
+[Blender-Render-Monitor](https://github.com/HarrisWilde/Blender-Render-Monitor)，
+不是本仓库独立维护的源码。**上游更新逻辑后，这边需要同步并核对应用侧适配。**
+
+- 给 Agent/开发者的入口见 [AGENTS.md](AGENTS.md)；
+- 同步流程、依赖契约与当前漂移状态见 [docs/upstream-sync.md](docs/upstream-sync.md)；
+- 当前 vendor 代码版本为 v1.5.7，上游 master 已到 v1.5.8（尚未同步）。
 
 ## 架构要点
 
