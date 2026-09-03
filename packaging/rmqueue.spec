@@ -18,6 +18,8 @@ a = Analysis(
         # 渲染/探针子进程由外部 blender python 直接 import，
         # 无法读取 PyInstaller 的 PYZ 归档内模块。
         (os.path.join(ROOT, "src", "rmqueue"), "rmqueue"),
+        # 应用图标：运行时 setWindowIcon 使用
+        (os.path.join(ROOT, "icon"), "icon"),
     ],
     hiddenimports=[],
     hookspath=[],
@@ -34,6 +36,7 @@ exe = EXE(
     [],
     exclude_binaries=True,
     name="RenderMonitorQueue",
+    icon=os.path.join(ROOT, "icon", "app.ico"),
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
