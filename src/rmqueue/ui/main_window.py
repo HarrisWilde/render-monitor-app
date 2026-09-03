@@ -11,8 +11,8 @@ from __future__ import annotations
 import os
 import sys
 
-from PySide6.QtCore import QSettings, Qt
-from PySide6.QtGui import QCloseEvent, QColor
+from PySide6.QtCore import QSettings, Qt, QTimer, QUrl
+from PySide6.QtGui import QCloseEvent, QColor, QDesktopServices
 from PySide6.QtWidgets import QFileDialog
 from qfluentwidgets import (
     FluentIcon,
@@ -25,7 +25,7 @@ from qfluentwidgets import (
     Theme,
 )
 
-from .. import blender_probe
+from .. import __version__, blender_probe
 from ..queue import Queue
 from .queue_page import QueuePage
 from .settings_page import (
@@ -34,7 +34,7 @@ from .settings_page import (
     THEME_LIGHT,
     SettingsPage,
 )
-from .workers import ProbeWorker, RenderWorker
+from .workers import ProbeWorker, RenderWorker, UpdateCheckWorker
 
 _APP_ORG = "RenderMonitorQueue"
 _APP_NAME = "rmqueue"
@@ -52,6 +52,7 @@ class MainWindow(FluentWindow):
         self._busy = False
         self._probe: ProbeWorker | None = None
         self._render: RenderWorker | None = None
+        self._update_worker: UpdateCheckWorker | None = None
         self._prefs = QSettings(_APP_ORG, _APP_NAME)
         # 整体进度：已完成文件累计 + 批次总数
         self._prev_done = 0
@@ -72,6 +73,10 @@ class MainWindow(FluentWindow):
         theme = self._prefs.value("theme", THEME_AUTO)
         self._apply_theme(str(theme))
         self.settings_page.set_theme(str(theme))
+        # 自动更新检查：默认开启，启动后延迟执行，避免影响首屏渲染
+        raw_auto = self._prefs.value("auto_check_updates", "true")
+        auto_check = str(raw_auto).lower() in ("1", "true", "yes")
+        self.settings_page.set_auto_check(auto_check)
         self._apply_system_accent()
 
         # 首页渲染选项：默认值 = QSettings → 自动探测兜底
@@ -103,7 +108,13 @@ class MainWindow(FluentWindow):
         self.page.saveProjectAsRequested.connect(self._save_project_as)
         self.page.configChanged.connect(self._persist_prefs)
         self.settings_page.themeChanged.connect(self._apply_theme)
+        self.settings_page.autoCheckChanged.connect(self._on_auto_check_changed)
+        self.settings_page.checkUpdateRequested.connect(
+            lambda: self._check_updates(manual=True)
+        )
+        self.settings_page.openReleaseRequested.connect(self._open_release_url)
         self._status("就绪：拖入 .blend 文件，或点「添加文件」")
+        QTimer.singleShot(1500, self._auto_check_updates)
 
     # ---------------------------------------------------------- 基础工具
     def _status(self, text: str, level: str = "info") -> None:
@@ -149,6 +160,51 @@ class MainWindow(FluentWindow):
         self._prefs.setValue("output_dir", cfg["output_dir"])
         self._prefs.setValue("output_source", cfg["output_source"])
         self._prefs.setValue("file_template", cfg["file_template"])
+
+    # ------------------------------------------------------ 自动更新
+    def _on_auto_check_changed(self, enabled: bool) -> None:
+        self._prefs.setValue("auto_check_updates", "true" if enabled else "false")
+        if enabled:
+            self._check_updates(manual=False)
+
+    def _auto_check_updates(self) -> None:
+        raw_auto = self._prefs.value("auto_check_updates", "true")
+        auto_check = str(raw_auto).lower() in ("1", "true", "yes")
+        if auto_check:
+            self._check_updates(manual=False)
+
+    def _check_updates(self, manual: bool = False) -> None:
+        if self._update_worker is not None and self._update_worker.isRunning():
+            return
+        self.settings_page.set_checking(True)
+        worker = UpdateCheckWorker(__version__, parent=self)
+        worker.checkFinished.connect(
+            lambda result, _manual=manual: self._on_update_check_finished(
+                result, manual=_manual
+            )
+        )
+        self._update_worker = worker
+        worker.start()
+
+    def _on_update_check_finished(self, result: dict, manual: bool = False) -> None:
+        self._update_worker = None
+        self.settings_page.set_latest_result(result)
+        if result.get("ok"):
+            if result.get("update_available"):
+                latest = result.get("latest_version") or result.get("latest_tag") or "?"
+                self._status(
+                    f"发现新版本 v{latest}：可在设置页前往下载", level="warn"
+                )
+            elif manual:
+                self._status("已是最新版本", level="ok")
+        elif manual:
+            self._status(
+                f"检查更新失败：{result.get('error', '未知错误')}", level="err"
+            )
+
+    def _open_release_url(self, url: str) -> None:
+        if url:
+            QDesktopServices.openUrl(QUrl(url))
 
     def _capture_project_settings(self) -> None:
         cfg = self._config()

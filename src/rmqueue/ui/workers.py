@@ -3,7 +3,8 @@
 - ProbeWorker：串行对多个 .blend 跑 blender -b 探针，逐个发回结果；
 - RenderWorker：严格串行渲染——按文件分组，逐文件 spawn/poll/finish，
   轮询 mmap 进度并通过 itemsTick 把每个快照的最新状态/进度回传 UI，
-  支持中途取消（终止当前进程、已完成保留、未开始保持待渲染）。
+  支持中途取消（终止当前进程、已完成保留、未开始保持待渲染）；
+- UpdateCheckWorker：后台请求 GitHub Releases，检查是否有新版本。
 """
 
 from __future__ import annotations
@@ -13,7 +14,7 @@ from collections import OrderedDict
 
 from PySide6.QtCore import QThread, Signal
 
-from .. import blender_probe, render_session
+from .. import blender_probe, render_session, updater
 from ..queue import Queue
 
 _STATUS_TEXT = {
@@ -44,6 +45,31 @@ class ProbeWorker(QThread):
         for path in self._paths:
             result = blender_probe.probe_blend(self._exe, path, self._vendor)
             self.fileProbed.emit(path, result.get("data"), result.get("message", ""))
+
+
+class UpdateCheckWorker(QThread):
+    """后台检查 GitHub 最新 Release。checkFinished(result_dict)"""
+
+    checkFinished = Signal(object)
+
+    def __init__(self, current_version: str, parent=None,
+                 repo: str = updater.GITHUB_REPO) -> None:
+        super().__init__(parent)
+        self._current_version = current_version
+        self._repo = repo
+
+    def run(self) -> None:  # noqa: D102
+        try:
+            result = updater.check_latest_release(
+                self._current_version, repo=self._repo
+            )
+        except Exception as exc:  # noqa: BLE001 - 后台检查失败不应中断主线程
+            result = {
+                "ok": False,
+                "current_version": self._current_version,
+                "error": str(exc),
+            }
+        self.checkFinished.emit(result)
 
 
 class RenderWorker(QThread):
