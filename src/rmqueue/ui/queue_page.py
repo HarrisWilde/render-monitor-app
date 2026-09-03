@@ -109,9 +109,11 @@ class _ShotProgressCell(QWidget):
         lay = QHBoxLayout(self)
         lay.setContentsMargins(2, 0, 6, 0)
         lay.setSpacing(4)
-        self.bar = ProgressBar(self)
-        self.bar.setFixedHeight(8)
-        self.bar.setUseAni(False)  # 跟随 0.5s tick 直刷，不做 150ms 动画
+        # 必须在构造时关动画：qfluentwidgets 构造期间 setValue(0) 会启动一条
+        # 结束值为 0 的 QPropertyAnimation；只 setUseAni(False) 不会停掉它，
+        # 后续 setVal(100) 可能被这条残留动画异步拉回 0（数字仍显示 100%）。
+        self.bar = ProgressBar(self, useAni=False)
+        self.bar.setFixedHeight(4)
         self.bar.setFixedWidth(96)
         self.label = make_secondary_caption("0%", self)
         self.label.setAlignment(
@@ -181,12 +183,11 @@ class QueuePage(QWidget):
         fm = self.lblPercent.fontMetrics()
         self.lblPercent.setFixedWidth(fm.horizontalAdvance("100.0%") + 6)
         # 整体进度：Fluent 细条（主题色）+ 忙碌（Indeterminate）双形态
-        self.progressOverall = ProgressBar()
-        self.progressOverall.setFixedHeight(10)
+        self.progressOverall = ProgressBar(useAni=False)
+        self.progressOverall.setFixedHeight(4)
         self.progressOverall.setFixedWidth(240)
-        self.progressOverall.setUseAni(False)
         self.progressBusy = IndeterminateProgressBar()
-        self.progressBusy.setFixedHeight(10)
+        self.progressBusy.setFixedHeight(4)
         self.progressBusy.setFixedWidth(240)
         head.addWidget(self.progressOverall)
         head.addWidget(self.progressBusy)
