@@ -31,8 +31,10 @@
 
 ## 截图/界面
 
+![Render Monitor Queue 主界面](docs/screenshots/screenshot.png)
+
 启动后左侧导航：「队列」（渲染队列主页）与「设置」（Blender 路径/输出目录/命名模板）。
-界面为 Fluent 风格；v1 固定浅色主题。
+界面为 Fluent 风格；支持浅色/深色主题（跟随系统或手动切换）。
 
 ## 快速开始（开发）
 
