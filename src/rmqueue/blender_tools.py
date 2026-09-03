@@ -41,15 +41,19 @@ def parse_blender_version(text: str) -> tuple[int, int, int] | None:
     return (int(m.group(1)), int(m.group(2)), int(m.group(3) or 0))
 
 
-def _registry_blender_dirs() -> list[str]:
-    """从 Windows 卸载表读取 Blender 安装目录（含 32/64 位视图）。"""
+def _registry_blender_entries() -> list[tuple[str, tuple[int, int, int] | None]]:
+    """从 Windows 卸载表读取 Blender 安装目录及 DisplayVersion。
+
+    返回 ``(InstallLocation, DisplayVersion 解析后的版本)``；DisplayVersion
+    可能比目录名更精确（如目录是 ``Blender 5.2``，DisplayVersion 是 ``5.2.1``）。
+    """
     if sys.platform != "win32":
         return []
     try:
         import winreg
     except ImportError:  # pragma: no cover
         return []
-    dirs: list[str] = []
+    entries: list[tuple[str, tuple[int, int, int] | None]] = []
     roots = [
         (winreg.HKEY_CURRENT_USER, winreg.KEY_WOW64_64KEY),
         (winreg.HKEY_LOCAL_MACHINE, winreg.KEY_WOW64_64KEY),
@@ -64,6 +68,7 @@ def _registry_blender_dirs() -> list[str]:
                         with winreg.OpenKey(key, winreg.EnumKey(key, i)) as sub:
                             display = ""
                             loc = ""
+                            display_version = ""
                             try:
                                 display = winreg.QueryValueEx(sub, "DisplayName")[0]
                             except OSError:
@@ -72,13 +77,35 @@ def _registry_blender_dirs() -> list[str]:
                                 loc = winreg.QueryValueEx(sub, "InstallLocation")[0]
                             except OSError:
                                 pass
+                            try:
+                                display_version = winreg.QueryValueEx(
+                                    sub, "DisplayVersion")[0]
+                            except OSError:
+                                pass
                             if "blender" in (display or "").lower() and loc:
-                                dirs.append(loc)
+                                version = parse_blender_version(display_version)
+                                entries.append((loc, version))
                     except OSError:
                         continue
         except OSError:
             continue
-    return dirs
+    return entries
+
+
+def _registry_blender_dirs() -> list[str]:
+    """从 Windows 卸载表读取 Blender 安装目录（含 32/64 位视图）。"""
+    return [loc for loc, _ in _registry_blender_entries()]
+
+
+def _registry_blender_version_map() -> dict[str, tuple[int, int, int]]:
+    """把注册表安装目录规范化为 ``版本号`` 的映射。"""
+    versions: dict[str, tuple[int, int, int]] = {}
+    for loc, version in _registry_blender_entries():
+        if version is None:
+            continue
+        key = os.path.normcase(os.path.normpath(os.path.abspath(loc)))
+        versions[key] = version
+    return versions
 
 
 def discover_blender_exes() -> list[str]:
@@ -120,10 +147,17 @@ def discover_blender_exes() -> list[str]:
 
 
 def blender_installs(exes: list[str] | None = None) -> list[BlenderInstall]:
-    """把可执行文件列表包装为 BlenderInstall（含解析版本），按版本降序。"""
+    """把可执行文件列表包装为 BlenderInstall（含解析版本），按版本降序。
+
+    Windows 上优先使用注册表 ``DisplayVersion``，因为安装目录通常只写到
+    ``Blender 5.2``，但实际补丁号可能是 ``5.2.1``。
+    """
+    registry_versions = _registry_blender_version_map()
     installs = []
     for exe in exes or discover_blender_exes():
         ver = parse_blender_version(os.path.dirname(exe) + os.sep + os.path.basename(exe))
+        exe_dir = os.path.normcase(os.path.normpath(os.path.abspath(os.path.dirname(exe))))
+        ver = registry_versions.get(exe_dir) or ver
         installs.append(
             BlenderInstall(
                 exe=exe,

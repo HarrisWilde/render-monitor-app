@@ -1,6 +1,8 @@
 """Blender 探测/版本解析测试（纯函数部分，不依赖真实安装）。"""
 
+import os
 import unittest
+from unittest.mock import patch
 
 from rmqueue.blender_tools import (
     BlenderInstall,
@@ -52,6 +54,19 @@ class TestPick(unittest.TestCase):
         ])
         self.assertEqual([i.version for i in installs],
                          [(5, 2, 0), (4, 5, 0), (4, 2, 0)])
+
+    def test_registry_display_version_overrides_directory_version(self):
+        exe = r"C:\PF\Blender Foundation\Blender 5.2\blender.exe"
+        exe_dir = os.path.normcase(
+            os.path.normpath(os.path.abspath(os.path.dirname(exe))))
+        registry_versions = {exe_dir: (5, 2, 1)}
+        with patch(
+            "rmqueue.blender_tools._registry_blender_version_map",
+            return_value=registry_versions,
+        ):
+            installs = blender_installs([exe])
+        self.assertEqual(installs[0].version, (5, 2, 1))
+        self.assertEqual(installs[0].version_str, "5.2.1")
 
 
 class TestDiscover(unittest.TestCase):

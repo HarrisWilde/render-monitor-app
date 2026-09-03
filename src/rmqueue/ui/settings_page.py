@@ -5,17 +5,17 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
     QFormLayout,
     QHBoxLayout,
-    QLabel,
     QVBoxLayout,
     QWidget,
 )
 from qfluentwidgets import BodyLabel, CardWidget, ComboBox, SubtitleLabel
 
 from .. import __version__
+from .theme import make_secondary_caption
 
 THEME_LIGHT = "light"
 THEME_DARK = "dark"
@@ -46,7 +46,7 @@ class SettingsPage(QWidget):
         self.cmbTheme.addItem("深色", userData=THEME_DARK)
         row.addWidget(self.cmbTheme)
         row.addStretch(1)
-        form.addRow("主题", row)
+        form.addRow(BodyLabel("主题"), row)
         av.addLayout(form)
         root.addWidget(appearance)
 
@@ -54,7 +54,7 @@ class SettingsPage(QWidget):
         about = CardWidget(self)
         bb = QVBoxLayout(about)
         bb.addWidget(BodyLabel("关于"))
-        info = QLabel(
+        info = make_secondary_caption(
             "Render Monitor Queue 渲染排队器\n"
             f"版本：v{__version__}\n"
             "许可：GPL-2.0-or-later\n"
@@ -64,8 +64,6 @@ class SettingsPage(QWidget):
             "源自 github.com/HarrisWilde/Blender-Render-Monitor）。\n"
             "依赖：本机 Blender 4.2+；渲染设备/引擎跟随各快照保存的项目设置。")
         info.setWordWrap(True)
-        info.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        info.setStyleSheet("color:#606060;font-size:12px;")
         bb.addWidget(info)
         root.addWidget(about)
         root.addStretch(1)

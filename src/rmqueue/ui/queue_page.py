@@ -18,7 +18,6 @@ from PySide6.QtCore import QTimer, Qt, Signal
 from PySide6.QtGui import QBrush, QColor, QGuiApplication
 from PySide6.QtWidgets import (
     QFileDialog,
-    QFrame,
     QHBoxLayout,
     QHeaderView,
     QLabel,
@@ -44,11 +43,15 @@ from qfluentwidgets import (
     SubtitleLabel,
     TreeWidget,
 )
-from qfluentwidgets.common.style_sheet import isDarkTheme
-
 from .. import blender_tools
 from ..naming import DEFAULT_FILE_TEMPLATE
 from ..queue import Queue
+from .theme import (
+    current_chip_border_hex,
+    current_secondary_text_hex,
+    current_text_hex,
+    make_secondary_caption,
+)
 from .workers import status_text
 
 ROLE_TOKEN = Qt.ItemDataRole.UserRole
@@ -60,7 +63,8 @@ _STATUS_COLORS = {
 }
 _BLENDER_EXE_HINT = (
     "渲染设备/引擎取自快照内保存的项目设置；若在 Blender 中为 GPU，"
-    "请用该设置重新捕获快照。")
+    "请用该设置重新捕获快照。"
+)
 
 
 def _norm(path: str) -> str:
@@ -86,7 +90,8 @@ class _DropHint(QLabel):
         super().__init__("松开鼠标：添加 .blend 文件到队列", parent)
         self.setStyleSheet(
             "background: rgba(0, 120, 212, 0.92); color: white;"
-            "border-radius: 8px; padding: 8px 16px; font-size: 13px;")
+            "border-radius: 8px; padding: 8px 16px; font-size: 13px;"
+        )
         self.adjustSize()
         self.hide()
 
@@ -108,12 +113,12 @@ class _ShotProgressCell(QWidget):
         self.bar.setFixedHeight(8)
         self.bar.setUseAni(False)  # 跟随 0.5s tick 直刷，不做 150ms 动画
         self.bar.setFixedWidth(96)
-        self.label = QLabel("0%")
-        self.label.setAlignment(Qt.AlignmentFlag.AlignRight
-                                | Qt.AlignmentFlag.AlignVCenter)
+        self.label = make_secondary_caption("0%", self)
+        self.label.setAlignment(
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+        )
         fm = self.label.fontMetrics()
         self.label.setFixedWidth(fm.horizontalAdvance("100%") + 4)
-        self.label.setStyleSheet("color:#808080;font-size:11px;")
         lay.addWidget(self.bar)
         lay.addWidget(self.label)
         self.setFixedWidth(160)
@@ -170,7 +175,9 @@ class QueuePage(QWidget):
         head.addWidget(self.countLabel)
         head.addStretch(1)
         self.lblPercent = QLabel("0.0%")
-        self.lblPercent.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        self.lblPercent.setAlignment(
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+        )
         fm = self.lblPercent.fontMetrics()
         self.lblPercent.setFixedWidth(fm.horizontalAdvance("100.0%") + 6)
         # 整体进度：Fluent 细条（主题色）+ 忙碌（Indeterminate）双形态
@@ -209,8 +216,9 @@ class QueuePage(QWidget):
         _cmd(FluentIcon.CHECKBOX, "全选", "all", lambda: self._set_all_selected(True))
         _cmd(FluentIcon.CLOSE, "全不选", "none", lambda: self._set_all_selected(False))
         # 渲染：单一动作，空闲=开始 / 渲染中=停止（见 _on_render_clicked）
-        self._render_action = _cmd(FluentIcon.PLAY, "开始渲染", "render",
-                                   self._on_render_clicked)
+        self._render_action = _cmd(
+            FluentIcon.PLAY, "开始渲染", "render", self._on_render_clicked
+        )
         # 让按钮文字与图标并排显示（默认 IconOnly，需显式切换）
         self.cmdBar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         # CommandBar 手动按“当前宽度”排布；按钮在 IconOnly 状态下创建，
@@ -228,8 +236,12 @@ class QueuePage(QWidget):
         self.tree.setColumnCount(4)
         self.tree.setHeaderLabels(["名称", "状态", "进度", "输出 / 说明"])
         self.tree.header().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        self.tree.header().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
-        self.tree.header().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        self.tree.header().setSectionResizeMode(
+            1, QHeaderView.ResizeMode.ResizeToContents
+        )
+        self.tree.header().setSectionResizeMode(
+            2, QHeaderView.ResizeMode.ResizeToContents
+        )
         self.tree.header().setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
         root.addWidget(self.tree, 1)
 
@@ -244,10 +256,7 @@ class QueuePage(QWidget):
         self.cmbBlender = ComboBox()
         self.cmbBlender.setMinimumWidth(200)
         row1.addWidget(self.cmbBlender)
-        self.lblBlenderPath = QLabel("")
-        self.lblBlenderPath.setStyleSheet("color:#808080;font-size:11px;")
-        self.lblBlenderPath.setTextInteractionFlags(
-            Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.lblBlenderPath = make_secondary_caption("", self)
         self.lblBlenderPath.setMinimumWidth(60)
         row1.addWidget(self.lblBlenderPath, 1)
         self.btnBrowseBlender = PushButton("浏览…")
@@ -260,9 +269,10 @@ class QueuePage(QWidget):
         row2 = QHBoxLayout()
         row2.addWidget(BodyLabel("输出目录"))
         self.cmbSource = ComboBox()
-        self.cmbSource.addItem("全局输出目录（下方路径）", userData="global")
-        self.cmbSource.addItem("跟随 .blend 场景内插件设置（未设置时用全局）",
-                               userData="project")
+        self.cmbSource.addItem("全局输出目录", userData="global")
+        self.cmbSource.addItem(
+            "跟随 .blend 场景内插件设置（未设置时用全局）", userData="project"
+        )
         row2.addWidget(self.cmbSource)
         self.edOutdir = LineEdit()
         self.edOutdir.setPlaceholderText("全局输出目录（绝对路径）")
@@ -305,7 +315,8 @@ class QueuePage(QWidget):
         self.edTemplate.textChanged.connect(self._on_config_changed)
         self.btnBrowseOut.clicked.connect(self._browse_outdir)
         self.btnDefaultTemplate.clicked.connect(
-            lambda: self.edTemplate.setText(DEFAULT_FILE_TEMPLATE))
+            lambda: self.edTemplate.setText(DEFAULT_FILE_TEMPLATE)
+        )
 
     def _on_save(self) -> None:
         if self._queue and self._queue.files:
@@ -354,8 +365,11 @@ class QueuePage(QWidget):
     def _browse_blender(self) -> None:
         if os.name == "nt":
             path, _ = QFileDialog.getOpenFileName(
-                self, "选择 blender.exe", r"C:\Program Files\Blender Foundation",
-                "Blender (blender.exe)")
+                self,
+                "选择 blender.exe",
+                r"C:\Program Files\Blender Foundation",
+                "Blender (blender.exe)",
+            )
         else:
             path, _ = QFileDialog.getOpenFileName(self, "选择 blender", "/", "Blender")
         if path:
@@ -364,7 +378,8 @@ class QueuePage(QWidget):
 
     def _browse_outdir(self) -> None:
         path = QFileDialog.getExistingDirectory(
-            self, "选择全局输出目录", self.edOutdir.text() or os.path.expanduser("~"))
+            self, "选择全局输出目录", self.edOutdir.text() or os.path.expanduser("~")
+        )
         if path:
             self.edOutdir.setText(path)
 
@@ -388,55 +403,84 @@ class QueuePage(QWidget):
                 shots_all = f.all_shots()
                 ok = sum(1 for s in shots_all if s.app_status == "DONE")
                 file_item = QTreeWidgetItem(
-                    [os.path.basename(f.path), f"完成 {ok}/{len(shots_all)}",
-                     "", f.path])
+                    [
+                        os.path.basename(f.path),
+                        f"完成 {ok}/{len(shots_all)}",
+                        "",
+                        f.path,
+                    ]
+                )
                 file_item.setFlags(file_item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
-                file_item.setCheckState(0, Qt.CheckState.Checked
-                                        if any(s.selected for s in shots_all)
-                                        else Qt.CheckState.Unchecked)
+                file_item.setCheckState(
+                    0,
+                    Qt.CheckState.Checked
+                    if any(s.selected for s in shots_all)
+                    else Qt.CheckState.Unchecked,
+                )
                 file_item.setToolTip(0, f.path)
                 file_item.setData(0, ROLE_TOKEN, ("file", f.path))
                 self.tree.addTopLevelItem(file_item)
                 for scene in f.scenes:
-                    sc_item = QTreeWidgetItem(                        [scene.name, "", "", scene.output_dir or ""])
+                    sc_item = QTreeWidgetItem(
+                        [scene.name, "", "", scene.output_dir or ""]
+                    )
                     sc_item.setFlags(sc_item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
-                    sc_item.setCheckState(0, Qt.CheckState.Checked
-                                          if any(s.selected for s in scene.shots)
-                                          else Qt.CheckState.Unchecked)
+                    sc_item.setCheckState(
+                        0,
+                        Qt.CheckState.Checked
+                        if any(s.selected for s in scene.shots)
+                        else Qt.CheckState.Unchecked,
+                    )
                     sc_item.setData(0, ROLE_TOKEN, ("scene", f.path, scene.name))
                     file_item.addChild(sc_item)
                     for shot in scene.shots:
-                        sh_item = QTreeWidgetItem([
-                            shot.name,
-                            status_text(shot.app_status),
-                            "",
-                            shot.error or shot.output or shot.blend_output,
-                        ])
-                        sh_item.setFlags(sh_item.flags()
-                                         | Qt.ItemFlag.ItemIsUserCheckable)
-                        sh_item.setCheckState(0, Qt.CheckState.Checked
-                                              if shot.selected
-                                              else Qt.CheckState.Unchecked)
-                        sh_item.setData(0, ROLE_TOKEN,
-                                        ("shot", f.path, scene.name, shot.uid))
-                        sh_item.setForeground(1, QBrush(
-                            _STATUS_COLORS.get(shot.app_status,
-                                               _STATUS_COLORS["PENDING"])))
+                        sh_item = QTreeWidgetItem(
+                            [
+                                shot.name,
+                                status_text(shot.app_status),
+                                "",
+                                shot.error or shot.output or shot.blend_output,
+                            ]
+                        )
+                        sh_item.setFlags(
+                            sh_item.flags() | Qt.ItemFlag.ItemIsUserCheckable
+                        )
+                        sh_item.setCheckState(
+                            0,
+                            Qt.CheckState.Checked
+                            if shot.selected
+                            else Qt.CheckState.Unchecked,
+                        )
+                        sh_item.setData(
+                            0, ROLE_TOKEN, ("shot", f.path, scene.name, shot.uid)
+                        )
+                        sh_item.setForeground(
+                            1,
+                            QBrush(
+                                _STATUS_COLORS.get(
+                                    shot.app_status, _STATUS_COLORS["PENDING"]
+                                )
+                            ),
+                        )
                         sh_item.setToolTip(3, shot.output or shot.error or "")
                         sc_item.addChild(sh_item)
                         cell = _ShotProgressCell()
-                        cell.set_fraction(1.0 if shot.app_status == "DONE" else 0.0,
-                                          shot.app_status)
+                        cell.set_fraction(
+                            1.0 if shot.app_status == "DONE" else 0.0, shot.app_status
+                        )
                         self.tree.setItemWidget(sh_item, 2, cell)
                         key = (_norm(f.path), scene.name, shot.uid)
                         self._rows[key] = (sh_item, cell)
                     sc_item.setExpanded(True)
                 file_item.setExpanded(True)
             total = q.total_shots()
-            done = sum(1 for f in q.files for s in f.all_shots()
-                       if s.app_status == "DONE")
-            self.countLabel.setText(f"{len(q.files)} 个文件 · {total} 个快照"
-                                    + (f" · {done} 完成" if done else ""))
+            done = sum(
+                1 for f in q.files for s in f.all_shots() if s.app_status == "DONE"
+            )
+            self.countLabel.setText(
+                f"{len(q.files)} 个文件 · {total} 个快照"
+                + (f" · {done} 完成" if done else "")
+            )
         finally:
             self._loading = False
 
@@ -491,11 +535,14 @@ class QueuePage(QWidget):
             return
         idx = self._root_file_index(self.tree.currentItem())
         new_idx = idx + delta
-        if not (0 <= idx < len(self._queue.files)
-                and 0 <= new_idx < len(self._queue.files)):
+        if not (
+            0 <= idx < len(self._queue.files) and 0 <= new_idx < len(self._queue.files)
+        ):
             return
         self._queue.files[idx], self._queue.files[new_idx] = (
-            self._queue.files[new_idx], self._queue.files[idx])
+            self._queue.files[new_idx],
+            self._queue.files[idx],
+        )
         self.refresh()
 
     def _on_remove_file(self) -> None:
@@ -520,7 +567,8 @@ class QueuePage(QWidget):
 
     def _on_add_files(self) -> None:
         paths, _ = QFileDialog.getOpenFileNames(
-            self, "选择 .blend 文件", "", "Blender 文件 (*.blend)")
+            self, "选择 .blend 文件", "", "Blender 文件 (*.blend)"
+        )
         if paths:
             self.filesAdded.emit(paths)
 
@@ -554,8 +602,9 @@ class QueuePage(QWidget):
     # ============================================================ 拖放
     def dragEnterEvent(self, event) -> None:  # noqa: N802
         urls = event.mimeData().urls()
-        if any(u.isLocalFile() and u.toLocalFile().lower().endswith(".blend")
-               for u in urls):
+        if any(
+            u.isLocalFile() and u.toLocalFile().lower().endswith(".blend") for u in urls
+        ):
             self._dropHint.show_at(event.position())
             event.acceptProposedAction()
 
@@ -570,8 +619,11 @@ class QueuePage(QWidget):
 
     def dropEvent(self, event) -> None:  # noqa: N802
         self._dropHint.hide()
-        paths = [u.toLocalFile() for u in event.mimeData().urls()
-                 if u.isLocalFile() and u.toLocalFile().lower().endswith(".blend")]
+        paths = [
+            u.toLocalFile()
+            for u in event.mimeData().urls()
+            if u.isLocalFile() and u.toLocalFile().lower().endswith(".blend")
+        ]
         if paths:
             self.filesAdded.emit(paths)
             event.acceptProposedAction()
@@ -580,14 +632,19 @@ class QueuePage(QWidget):
     def set_busy(self, busy: bool) -> None:
         """渲染中：禁用结构性操作与选项编辑，但树保持可用（不冻结）。"""
         self._rendering = busy
-        for key in ("open", "save", "add", "remove", "up", "down",
-                    "all", "none"):
+        for key in ("open", "save", "add", "remove", "up", "down", "all", "none"):
             self._action_buttons[key].setEnabled(not busy)
         self._sync_render_action()
-        for w in (self.cmbBlender, self.cmbSource, self.edOutdir,
-                  self.edTemplate, self.btnBrowseBlender,
-                  self.btnBrowseOut, self.btnDefaultTemplate,
-                  self.btnRescanBlender):
+        for w in (
+            self.cmbBlender,
+            self.cmbSource,
+            self.edOutdir,
+            self.edTemplate,
+            self.btnBrowseBlender,
+            self.btnBrowseOut,
+            self.btnDefaultTemplate,
+            self.btnRescanBlender,
+        ):
             w.setEnabled(not busy)
         if busy:
             self.workerLabel.setText("渲染中…")
@@ -640,8 +697,9 @@ class QueuePage(QWidget):
     def set_status(self, text: str) -> None:
         self.statusLabel.setText(text)
 
-    def on_items_tick(self, file_path: str, items: list[dict], done: int,
-                      failed: int, total: int) -> None:
+    def on_items_tick(
+        self, file_path: str, items: list[dict], done: int, failed: int, total: int
+    ) -> None:
         """把子进程逐快照状态/进度刷到对应行（不整树重建，避免闪烁）。"""
         for j in items:
             key = (_norm(file_path), j.get("scene", ""), j.get("uid", ""))
@@ -652,13 +710,15 @@ class QueuePage(QWidget):
             status = j.get("status", "PENDING")
             # 状态列只显示稳定文字（采样/块细节放左下角状态行 + 悬停提示）
             item.setText(1, status_text(status))
-            item.setForeground(1, QBrush(_STATUS_COLORS.get(
-                status, _STATUS_COLORS["PENDING"])))
+            item.setForeground(
+                1, QBrush(_STATUS_COLORS.get(status, _STATUS_COLORS["PENDING"]))
+            )
             samples = j.get("samples", 0)
             samples_total = j.get("samples_total", 0)
             if status == "RENDERING":
-                item.setToolTip(3, f"采样 {samples}/{samples_total}"
-                                if samples_total else "渲染中…")
+                item.setToolTip(
+                    3, f"采样 {samples}/{samples_total}" if samples_total else "渲染中…"
+                )
             elif status == "FAILED":
                 item.setText(3, j.get("error") or item.text(3))
                 item.setToolTip(3, item.text(3))
@@ -671,13 +731,17 @@ class QueuePage(QWidget):
     # ============================================================ 配置
     def _show_template_tips(self) -> None:
         """命名模板占位符说明：Fluent Flyout（圆角卡片，风格同参考图）。"""
-        text = "#252525" if not isDarkTheme() else "#e6e6e6"
-        sub = "#808080"
+        text = current_text_hex()
+        sub = current_secondary_text_hex()
         accent = "#0078d4"
-        chip_border = "#d0d0d0" if not isDarkTheme() else "#5a5a5a"
+        chip_border = current_chip_border_hex()
 
-        view = FlyoutView(title="命名模板占位符", content="",
-                          icon=FluentIcon.DOCUMENT, isClosable=True)
+        view = FlyoutView(
+            title="命名模板占位符",
+            content="",
+            icon=FluentIcon.DOCUMENT,
+            isClosable=True,
+        )
 
         rows = [
             ("{file}", "当前 .blend 文件名（去扩展名）", "job_scene"),
@@ -695,7 +759,8 @@ class QueuePage(QWidget):
             chip.setStyleSheet(
                 f"border:1px solid {chip_border}; border-radius:6px;"
                 f" background: rgba(0,120,212,0.08); color:{accent};"
-                f" padding: 2px 8px; font-weight:600;")
+                f" padding: 2px 8px; font-weight:600;"
+            )
             col = QVBoxLayout()
             col.setContentsMargins(0, 0, 0, 0)
             col.setSpacing(0)
@@ -719,7 +784,10 @@ class QueuePage(QWidget):
         link.setStyleSheet(f"color:{accent};")
         view.addWidget(link)
 
-        Flyout.make(view, target=self.btnTemplateHelp, parent=self.window())
+        flyout = Flyout.make(
+            view, target=self.btnTemplateHelp, parent=self.window()
+        )
+        view.closed.connect(flyout.close)
 
     def _on_config_changed(self) -> None:
         self.configChanged.emit()
@@ -739,7 +807,9 @@ class QueuePage(QWidget):
         if cfg.get("file_template"):
             self.edTemplate.setText(cfg["file_template"])
         for i in range(self.cmbSource.count()):
-            if str(self.cmbSource.itemData(i) or "") == cfg.get("output_source", "global"):
+            if str(self.cmbSource.itemData(i) or "") == cfg.get(
+                "output_source", "global"
+            ):
                 self.cmbSource.setCurrentIndex(i)
                 break
         self._on_config_changed()

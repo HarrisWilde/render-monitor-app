@@ -65,7 +65,7 @@ class MainWindow(FluentWindow):
         self.addSubInterface(self.page, FluentIcon.HOME, "队列")
         self.addSubInterface(self.settings_page, FluentIcon.SETTING, "设置")
 
-        self.setWindowTitle("Render Monitor Queue 渲染排队器")
+        self.setWindowTitle("Render Monitor Queue 渲染队列")
         self.resize(1200, 820)
 
         # 主题：默认跟随系统（未保存过选择时），并同步 Windows 系统强调色
@@ -79,15 +79,19 @@ class MainWindow(FluentWindow):
         exe = self._prefs.value("blender_exe", "")
         if not exe:
             from ..blender_tools import pick_default
+
             picked = pick_default()
             exe = picked.exe if picked else ""
-        self.page.config_set({
-            "blender_exe": exe,
-            "output_dir": self._prefs.value("output_dir", ""),
-            "output_source": self._prefs.value("output_source", "global"),
-            "file_template": self._prefs.value(
-                "file_template", "{file}/{scene}/{name} {index}"),
-        })
+        self.page.config_set(
+            {
+                "blender_exe": exe,
+                "output_dir": self._prefs.value("output_dir", ""),
+                "output_source": self._prefs.value("output_source", "global"),
+                "file_template": self._prefs.value(
+                    "file_template", "{file}/{scene}/{name} {index}"
+                ),
+            }
+        )
         self.page.set_queue(self.queue)
 
         # 信号
@@ -126,8 +130,9 @@ class MainWindow(FluentWindow):
         try:
             import winreg
 
-            with winreg.OpenKey(winreg.HKEY_CURRENT_USER,
-                                r"Software\Microsoft\Windows\DWM") as key:
+            with winreg.OpenKey(
+                winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\DWM"
+            ) as key:
                 val, _ = winreg.QueryValueEx(key, "AccentColor")
             return QColor(val & 0xFF, (val >> 8) & 0xFF, (val >> 16) & 0xFF)
         except Exception:  # noqa: BLE001 - 读取失败就用默认主题色
@@ -187,8 +192,10 @@ class MainWindow(FluentWindow):
             return
         stats = self.queue.merge_probe(path, data.get("scenes", []))
         self.page.refresh()
-        self._status(f"{os.path.basename(path)}：{data.get('blender_version', '?')}，"
-                     f"新增 {stats['shots_added']} 个快照")
+        self._status(
+            f"{os.path.basename(path)}：{data.get('blender_version', '?')}，"
+            f"新增 {stats['shots_added']} 个快照"
+        )
 
     def _on_probe_finished(self) -> None:
         self.page.refresh()
@@ -221,7 +228,12 @@ class MainWindow(FluentWindow):
         self._set_busy(True)
         self.page.set_status(f"开始渲染（{total} 张）…")
         self._render = RenderWorker(
-            self.queue, exe, blender_probe.find_vendor_dir(), outdir, template, self,
+            self.queue,
+            exe,
+            blender_probe.find_vendor_dir(),
+            outdir,
+            template,
+            self,
         )
         self._render.fileStarted.connect(self._on_file_started)
         self._render.itemsTick.connect(self._on_items_tick)
@@ -235,13 +247,13 @@ class MainWindow(FluentWindow):
         self.page.set_status(f"渲染中：{os.path.basename(path)}（{total} 张）")
         self.page.set_overall(self._prev_done + self._prev_failed, self._grand_total)
 
-    def _on_items_tick(self, path: str, items, done: int, failed: int,
-                       total: int) -> None:
+    def _on_items_tick(
+        self, path: str, items, done: int, failed: int, total: int
+    ) -> None:
         self.page.on_items_tick(path, items, done, failed, total)
         # 总进度平滑混算：已完成张（DONE/FAILED）按整张计 1，当前张按自身
         # 进度（0..1，分块加权）映射到它的份额区间，避免“0%→10%”跳变
-        terminal = sum(1 for e in items
-                       if e.get("status") in ("DONE", "FAILED"))
+        terminal = sum(1 for e in items if e.get("status") in ("DONE", "FAILED"))
         partial = 0.0
         current = ""
         for e in items:
@@ -249,7 +261,7 @@ class MainWindow(FluentWindow):
                 current = e.get("name", "")
                 partial = float(e.get("progress") or 0.0)
                 break
-        value = (self._prev_done + self._prev_failed + terminal + partial)
+        value = self._prev_done + self._prev_failed + terminal + partial
         self.page.set_overall(value, self._grand_total)
         # 左下角状态行：当前快照 + 采样/块细节 + 批次计数
         running = next((e for e in items if e.get("status") == "RENDERING"), None)
@@ -278,8 +290,10 @@ class MainWindow(FluentWindow):
         msg = overview.get("message", "")
         if not cancelled:
             done, failed = overview.get("done", 0), overview.get("failed", 0)
-            self._status(f"{msg} —— 输出见各快照「输出」列",
-                         level="ok" if failed == 0 else "warn")
+            self._status(
+                f"{msg} —— 输出见各快照「输出」列",
+                level="ok" if failed == 0 else "warn",
+            )
         else:
             self._status(msg, level="info")
         self._render = None
@@ -292,7 +306,8 @@ class MainWindow(FluentWindow):
     # ------------------------------------------------------ 项目文件
     def _open_project(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
-            self, "打开队列项目", "", "Render Monitor Queue (*.rmq.json);;JSON (*.json)")
+            self, "打开队列项目", "", "Render Monitor Queue (*.rmq.json);;JSON (*.json)"
+        )
         if not path:
             return
         try:
@@ -302,12 +317,14 @@ class MainWindow(FluentWindow):
             return
         self.queue = q
         self.page.set_queue(q)
-        self.page.config_set({
-            "blender_exe": q.settings.blender_exe,
-            "output_dir": q.settings.output_dir,
-            "output_source": q.settings.output_source,
-            "file_template": q.settings.file_template,
-        })
+        self.page.config_set(
+            {
+                "blender_exe": q.settings.blender_exe,
+                "output_dir": q.settings.output_dir,
+                "output_source": q.settings.output_source,
+                "file_template": q.settings.file_template,
+            }
+        )
         self.page.refresh()
         self._status(f"已打开项目：{os.path.basename(path)}")
 
@@ -317,8 +334,11 @@ class MainWindow(FluentWindow):
 
     def _save_project_as(self) -> None:
         path, _ = QFileDialog.getSaveFileName(
-            self, "保存队列项目", "queue.rmq.json",
-            "Render Monitor Queue (*.rmq.json);;JSON (*.json)")
+            self,
+            "保存队列项目",
+            "queue.rmq.json",
+            "Render Monitor Queue (*.rmq.json);;JSON (*.json)",
+        )
         if not path:
             return
         self._capture_project_settings()
@@ -331,6 +351,7 @@ class MainWindow(FluentWindow):
     # ------------------------------------------------------ 生命周期
     def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802
         if self._render is not None and self._busy:
+
             def _quit() -> None:
                 self._render.cancel()
                 self._render.wait(5000)
@@ -339,7 +360,8 @@ class MainWindow(FluentWindow):
             box = MessageBox(
                 "退出",
                 "渲染正在进行，确定退出？（将停止当前渲染，未完成的快照保留待渲染）",
-                self)
+                self,
+            )
             box.yesButton.setText("退出")
             box.cancelButton.setText("取消")
             box.yesSignal.connect(_quit)
