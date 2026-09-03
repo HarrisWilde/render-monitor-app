@@ -46,36 +46,44 @@ class TestFindSetupAsset(unittest.TestCase):
         self.assertIsNone(updater.find_setup_asset({"assets": []}))
 
 
+class TestReleaseTagFromUrl(unittest.TestCase):
+    def test_extract_tag(self) -> None:
+        self.assertEqual(
+            updater._release_tag_from_url(
+                "https://github.com/x/releases/tag/v0.2.0"
+            ),
+            "v0.2.0",
+        )
+
+
 class TestCheckLatestReleaseParsing(unittest.TestCase):
     """用 stub 网络层验证 check_latest_release 的组装逻辑。"""
 
     def test_update_available(self) -> None:
-        original = updater.fetch_latest_release
-        updater.fetch_latest_release = lambda *a, **kw: {
+        original = updater.fetch_latest_release_page
+        updater.fetch_latest_release_page = lambda *a, **kw: {
             "tag_name": "v0.2.0",
             "html_url": "https://github.com/x/releases/tag/v0.2.0",
-            "published_at": "2025-01-01T00:00:00Z",
-            "assets": [{"name": "RenderMonitorQueue-Setup-0.2.0.exe"}],
         }
         try:
             result = updater.check_latest_release("0.1.1")
         finally:
-            updater.fetch_latest_release = original
+            updater.fetch_latest_release_page = original
         self.assertTrue(result["update_available"])
         self.assertEqual(result["latest_version"], "0.2.0")
-        self.assertIsNotNone(result["asset"])
+        self.assertEqual(result["html_url"],
+                         "https://github.com/x/releases/tag/v0.2.0")
 
     def test_no_update(self) -> None:
-        original = updater.fetch_latest_release
-        updater.fetch_latest_release = lambda *a, **kw: {
+        original = updater.fetch_latest_release_page
+        updater.fetch_latest_release_page = lambda *a, **kw: {
             "tag_name": "v0.1.1",
             "html_url": "https://github.com/x/releases/tag/v0.1.1",
-            "assets": [],
         }
         try:
             result = updater.check_latest_release("0.1.1")
         finally:
-            updater.fetch_latest_release = original
+            updater.fetch_latest_release_page = original
         self.assertFalse(result["update_available"])
 
 
